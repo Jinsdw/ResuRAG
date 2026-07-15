@@ -14,11 +14,6 @@ _lock = threading.Lock()
 _embedder = None
 
 
-def _token_to_id(token: str) -> int:
-    digest = hashlib.md5(token.encode("utf-8")).hexdigest()
-    return int(digest, 16) % 1_000_000
-
-
 def _is_model_ready(model_dir: Path) -> bool:
     if not model_dir.is_dir():
         return False
@@ -42,15 +37,34 @@ def _ensure_local_model(model_name: str, model_dir: Path) -> str:
     return str(model_dir)
 
 
-class BGEEmbedder:
-    """BGE-M3 多向量编码器（支持稠密+稀疏）"""
+def token_to_id(token: str) -> int:
+    """跨进程稳定的 token id，避免 Python 内置 hash 随机化。"""
+    digest = hashlib.md5(token.encode("utf-8")).hexdigest()
+    return int(digest, 16) % 1_000_000
 
+
+def encode_sparse_text(text: str) -> Dict[int, float]:
+    tokens = list(text.strip())
+    if not tokens:
+        return {}
+
+    token_counts = Counter(tokens)
+    total = len(tokens)
+    sparse_vec = {}
+    for token, count in token_counts.items():
+        if not token.strip():
+            continue
+        sparse_vec[token_to_id(token)] = count / total
+    return sparse_vec
+
+
+class BGEEmbedder:
     def __init__(self, model_name: str, model_dir: Path):
         model_path = _ensure_local_model(model_name, model_dir)
         self.model = SentenceTransformer(model_path)
         self.dim = 1024
 
-    def encode_dense(self, texts: List[str], batch_size: int = 32) -> np.ndarray:
+    def encode(self, texts: List[str], batch_size: int = 32) -> np.ndarray:
         embeddings = self.model.encode(
             texts,
             batch_size=batch_size,
@@ -59,26 +73,9 @@ class BGEEmbedder:
         )
         return embeddings
 
-    def encode_sparse(self, texts: List[str]) -> List[Dict[int, float]]:
-        sparse_vectors = []
-        for text in texts:
-            tokens = list(text)
-            token_counts = Counter(tokens)
-            total_tokens = len(tokens)
-
-            sparse_vec = {}
-            for token, count in token_counts.items():
-                if len(token.strip()) == 0:
-                    continue
-                weight = count / total_tokens
-                sparse_vec[_token_to_id(token)] = weight
-
-            sparse_vectors.append(sparse_vec)
-
-        return sparse_vectors
-
-    def get_dense_dim(self) -> int:
-        return self.dim
+    def encode_query_vector(self, query: str) -> List[float]:
+        vector = self.encode([query])[0]
+        return vector.astype(float).tolist()
 
 
 def get_embedder() -> BGEEmbedder:
