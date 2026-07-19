@@ -1,5 +1,5 @@
-from doc_service.api import app
-from doc_service.config import Config
-from doc_service.core import RAGIngestionPipeline
+from api import app
+from config import Config
+from core import RAGIngestionPipeline
 
 __all__ = ["app", "Config", "RAGIngestionPipeline"]

@@ -7,9 +7,9 @@ from uuid import uuid4
 import aiofiles
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from doc_service.config import Config
-from doc_service.core.utils import compute_md5, sanitize_filename
-from doc_service.loaders import load_documents
+from config import Config
+from core.utils import compute_md5, sanitize_filename
+from loaders import load_documents
 
 
 class RAGIngestionPipeline:

@@ -3,8 +3,8 @@ import json
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 
-from doc_service.config import Config
-from doc_service.core.pipeline import RAGIngestionPipeline
+from config import Config
+from core.pipeline import RAGIngestionPipeline
 
 app = FastAPI(title="RAG 上传切割服务")
 pipeline = RAGIngestionPipeline(Config.BASE_ROOT)

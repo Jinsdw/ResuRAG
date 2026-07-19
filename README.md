@@ -22,7 +22,7 @@ ResuRAG/
 cd backend
 docker compose up -d
 pip install -r requirements.txt
-python -m doc_service.main
+python doc_service/main.py
 python indexing_service/main.py
 python retrieval_service/main.py
 python generation_service/main.py
