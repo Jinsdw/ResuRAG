@@ -1,0 +1,114 @@
+import { useCallback, useState } from 'react';
+import type { ChatMessage, Citation, DebugSettings, SearchResult, Session } from '../types';
+import { streamGenerate } from '../services/generationService';
+import { searchDocuments } from '../services/retrievalService';
+
+function toCitations(results: SearchResult[]): Citation[] {
+  return results.map((item, index) => ({
+    index: index + 1,
+    chunk_id: item.chunk_id,
+    source_file_name: item.source_file_name,
+    source_page: item.source_page,
+    score: item.score,
+    content: item.content,
+  }));
+}
+
+export function useChat(
+  activeSession: Session | null,
+  updateSession: (id: string, updater: (session: Session) => Session) => void,
+  debug: DebugSettings,
+) {
+  const [sending, setSending] = useState(false);
+
+  const sendMessage = useCallback(
+    async (query: string) => {
+      if (!activeSession || !query.trim() || sending) return;
+
+      const sessionId = activeSession.id;
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: query.trim(),
+        timestamp: Date.now(),
+      };
+
+      const assistantId = crypto.randomUUID();
+      const assistantMessage: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        citations: [],
+        isStreaming: true,
+        timestamp: Date.now(),
+      };
+
+      updateSession(sessionId, (session) => {
+        const title =
+          session.messages.length === 0 ? query.trim().slice(0, 30) : session.title;
+        return {
+          ...session,
+          title,
+          updatedAt: Date.now(),
+          messages: [...session.messages, userMessage, assistantMessage],
+        };
+      });
+
+      setSending(true);
+      try {
+        const results = await searchDocuments({
+          query: query.trim(),
+          topK: debug.topK,
+          filterFileUuid: debug.selectedFileUuid,
+        });
+
+        const filtered = results.filter((item) => item.score >= debug.similarityThreshold);
+        const citations = toCitations(filtered);
+
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: session.messages.map((msg) =>
+            msg.id === assistantId ? { ...msg, citations } : msg,
+          ),
+        }));
+
+        let content = '';
+        for await (const event of streamGenerate(query.trim(), filtered)) {
+          if (event.type === 'content') {
+            content += event.content;
+            updateSession(sessionId, (session) => ({
+              ...session,
+              messages: session.messages.map((msg) =>
+                msg.id === assistantId ? { ...msg, content } : msg,
+              ),
+            }));
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        }
+
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: session.messages.map((msg) =>
+            msg.id === assistantId ? { ...msg, isStreaming: false } : msg,
+          ),
+        }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '发送失败';
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: session.messages.map((msg) =>
+            msg.id === assistantId
+              ? { ...msg, content: `抱歉，生成回答时出错：${message}`, isStreaming: false }
+              : msg,
+          ),
+        }));
+      } finally {
+        setSending(false);
+      }
+    },
+    [activeSession, debug, sending, updateSession],
+  );
+
+  return { sending, sendMessage };
+}

@@ -1,0 +1,41 @@
+@import '../../styles/variables.less';
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+
+  .ant-list-item {
+    padding: 10px 12px !important;
+    border-radius: @radius-base;
+    cursor: pointer;
+    border-block-end: none !important;
+    margin-bottom: 4px;
+    transition: background 0.2s;
+
+    &:hover {
+      background: @color-hover-bg;
+    }
+  }
+}
+
+.session-item--active {
+  background: @color-active-bg !important;
+  border-left: 3px solid @color-accent;
+}
+
+.session-icon {
+  color: @color-accent;
+}
+
+.session-title {
+  color: @color-primary;
+  max-width: 140px;
+}
+
+.session-delete {
+  color: @color-text-muted;
+
+  &:hover {
+    color: @color-danger;
+  }
+}

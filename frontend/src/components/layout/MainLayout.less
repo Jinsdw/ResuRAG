@@ -1,0 +1,56 @@
+@import '../../styles/variables.less';
+
+.main-layout {
+  height: 100%;
+  background: @color-bg-secondary;
+}
+
+.main-header {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  background: @color-primary !important;
+  padding: 0 24px !important;
+  height: @header-height !important;
+  line-height: @header-height !important;
+}
+
+.main-logo {
+  margin: 0 !important;
+  color: @color-white !important;
+}
+
+.main-subtitle {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+}
+
+.main-body {
+  height: calc(100% - @header-height);
+}
+
+.main-sider {
+  background: @color-bg !important;
+
+  &--left,
+  &--right {
+    overflow: hidden;
+  }
+}
+
+.main-content {
+  background: @color-bg-secondary;
+  overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+  .main-sider--right {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-sider--left {
+    display: none;
+  }
+}
