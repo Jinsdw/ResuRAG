@@ -10,7 +10,7 @@
     cursor: pointer;
     border-block-end: none !important;
     margin-bottom: 4px;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
 
     &:hover {
       background: @color-hover-bg;
@@ -21,6 +21,7 @@
 .session-item--active {
   background: @color-active-bg !important;
   border-left: 3px solid @color-accent;
+  box-shadow: @shadow-sm;
 }
 
 .session-icon {

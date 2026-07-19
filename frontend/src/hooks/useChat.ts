@@ -59,7 +59,6 @@ export function useChat(
         const results = await searchDocuments({
           query: query.trim(),
           topK: debug.topK,
-          filterFileUuid: debug.selectedFileUuid,
         });
 
         const filtered = results.filter((item) => item.score >= debug.similarityThreshold);

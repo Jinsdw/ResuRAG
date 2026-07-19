@@ -1,30 +1,83 @@
 @import '../../styles/variables.less';
 
 .chat-input {
-  display: flex;
-  gap: 12px;
-  padding: 16px 24px;
+  padding: 16px 24px 20px;
   border-top: 1px solid @color-border;
   background: @color-bg;
-  align-items: flex-end;
+  box-shadow: 0 -2px 12px rgba(15, 23, 42, 0.04);
+}
 
-  .ant-input {
-    border-color: @color-border;
+.chat-input-box {
+  position: relative;
+  border: 1px solid @color-border;
+  border-radius: 24px;
+  background: @color-bg;
+  padding: 6px 52px 6px 6px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 
-    &:focus {
-      border-color: @color-accent;
-      box-shadow: 0 0 0 2px fade(@color-accent, 15%);
-    }
+  &:focus-within {
+    border-color: @color-accent-light;
+    box-shadow: @shadow-input;
+  }
+}
+
+.chat-input-textarea {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.6;
+
+  &:hover,
+  &:focus {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  &::placeholder {
+    color: @color-text-muted;
   }
 }
 
 .chat-send-btn {
-  background: @color-accent !important;
-  border-color: @color-accent !important;
-  height: 40px;
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: @color-border;
+  color: @color-text-muted;
+  font-size: 14px;
+  cursor: not-allowed;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
 
-  &:hover {
-    background: @color-accent-hover !important;
-    border-color: @color-accent-hover !important;
+  &--active {
+    background: @color-accent-light;
+    color: @color-white;
+    cursor: pointer;
+
+    &:hover {
+      background: @color-accent;
+      transform: scale(1.05);
+    }
+
+    &:active {
+      transform: scale(0.96);
+    }
+  }
+
+  &:disabled {
+    background: @color-border;
+    color: @color-text-muted;
+    cursor: not-allowed;
+    transform: none;
   }
 }

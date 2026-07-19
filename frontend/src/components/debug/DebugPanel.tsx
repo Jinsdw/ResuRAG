@@ -1,7 +1,6 @@
 import { BugOutlined } from '@ant-design/icons';
 import { Divider, InputNumber, Typography } from 'antd';
 import { useAppContext } from '../../context/AppContext';
-import { KnowledgeBaseSelector } from './KnowledgeBaseSelector';
 import { SimilarityThresholdSlider } from './SimilarityThresholdSlider';
 import './DebugPanel.less';
 
@@ -15,20 +14,19 @@ export function DebugPanel() {
       <div className="debug-header">
         <BugOutlined className="debug-icon" />
         <Title level={5} className="debug-title">
-          ????
+          调试面板
         </Title>
       </div>
       <Text type="secondary" className="debug-desc">
-        ???????????????
+        调整检索参数，优化个人信息问答的匹配质量
       </Text>
 
       <Divider className="debug-divider" />
 
-      <KnowledgeBaseSelector />
       <SimilarityThresholdSlider />
 
       <div className="topk-setting">
-        <label className="debug-label">?? Top-K</label>
+        <label className="debug-label">检索 Top-K</label>
         <InputNumber
           min={1}
           max={20}

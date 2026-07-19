@@ -7,10 +7,14 @@
 
 .threshold-slider-track {
   overflow: hidden;
-  padding: 0 2px;
+  padding: 2px 12px;
 
   .ant-slider {
     margin: 8px 0 4px;
+  }
+
+  .ant-slider-track {
+    background: @color-accent-light !important;
   }
 }
 
@@ -25,10 +29,19 @@
   font-weight: 600;
 }
 
+.debug-label {
+  display: block;
+  font-size: 13px;
+  color: @color-primary;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
 .threshold-legend {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
   margin-top: 8px;
+  color: @color-text-secondary;
 }

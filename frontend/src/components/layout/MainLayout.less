@@ -9,20 +9,23 @@
   display: flex !important;
   align-items: center;
   gap: 12px;
-  background: @color-primary !important;
+  background: @gradient-header !important;
   padding: 0 24px !important;
   height: @header-height !important;
   line-height: @header-height !important;
+  box-shadow: @shadow-md;
 }
 
 .main-logo {
   margin: 0 !important;
   color: @color-white !important;
+  letter-spacing: 0.02em;
 }
 
 .main-subtitle {
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.65);
   font-size: 13px;
+  font-weight: 400;
 }
 
 .main-body {
@@ -32,9 +35,14 @@
 .main-sider {
   background: @color-bg !important;
 
-  &--left,
+  &--left {
+    overflow: hidden;
+    border-right: 1px solid @color-border;
+  }
+
   &--right {
     overflow: hidden;
+    border-left: 1px solid @color-border;
   }
 }
 

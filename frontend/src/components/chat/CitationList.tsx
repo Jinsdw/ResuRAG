@@ -14,14 +14,14 @@ export function CitationList({ citations }: CitationListProps) {
 
   return (
     <div className="citation-list">
-      <Text className="citation-title">????</Text>
+      <Text className="citation-title">引用来源</Text>
       {citations.map((item) => (
         <div key={item.chunk_id} className="citation-item">
           <div className="citation-header">
             <Tag color="blue">[{item.index}]</Tag>
             <Text strong className="citation-source">
               {item.source_file_name}
-              {item.source_page ? ` � ? ${item.source_page} ?` : ''}
+              {item.source_page ? ` · 第 ${item.source_page} 页` : ''}
             </Text>
             <Tag
               style={{
@@ -30,7 +30,7 @@ export function CitationList({ citations }: CitationListProps) {
                 background: `${scoreColor(item.score)}14`,
               }}
             >
-              {scoreLabel(item.score)} � {(item.score * 100).toFixed(0)}%
+              {scoreLabel(item.score)} · {(item.score * 100).toFixed(0)}%
             </Tag>
           </div>
           <Paragraph ellipsis={{ rows: 2 }} className="citation-content">

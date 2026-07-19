@@ -24,14 +24,6 @@ export interface Session {
   updatedAt: number;
 }
 
-export interface KnowledgeFile {
-  file_uuid: string;
-  original_name: string;
-  total_chunks: number;
-  upload_time: string;
-  status: string;
-}
-
 export interface SearchResult {
   chunk_id: string;
   content: string;
@@ -43,16 +35,8 @@ export interface SearchResult {
 }
 
 export interface DebugSettings {
-  selectedFileUuid: string | null;
   similarityThreshold: number;
   topK: number;
-}
-
-export interface UploadResult {
-  file_uuid: string;
-  original_name: string;
-  total_chunks: number;
-  chunk_dir: string;
 }
 
 export type StreamEvent =

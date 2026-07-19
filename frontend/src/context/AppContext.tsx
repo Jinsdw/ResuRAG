@@ -1,7 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { DebugSettings, KnowledgeFile, Session, UploadResult } from '../types';
+import type { DebugSettings, Session } from '../types';
 import { useChat } from '../hooks/useChat';
-import { useKnowledgeBase } from '../hooks/useKnowledgeBase';
 import { useSessions } from '../hooks/useSessions';
 
 interface AppContextValue {
@@ -11,11 +10,6 @@ interface AppContextValue {
   createNewSession: () => Session;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => void;
-  files: KnowledgeFile[];
-  filesLoading: boolean;
-  uploading: boolean;
-  uploadFile: (file: File) => Promise<UploadResult>;
-  refreshFiles: () => Promise<void>;
   debug: DebugSettings;
   setDebug: (patch: Partial<DebugSettings>) => void;
   sending: boolean;
@@ -35,10 +29,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     deleteSession,
   } = useSessions();
 
-  const { files, loading: filesLoading, uploading, refresh, upload } = useKnowledgeBase();
-
   const [debug, setDebugState] = useState<DebugSettings>({
-    selectedFileUuid: null,
     similarityThreshold: 0.3,
     topK: 10,
   });
@@ -57,11 +48,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createNewSession,
       selectSession,
       deleteSession,
-      files,
-      filesLoading,
-      uploading,
-      uploadFile: upload,
-      refreshFiles: refresh,
       debug,
       setDebug,
       sending,
@@ -74,11 +60,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createNewSession,
       selectSession,
       deleteSession,
-      files,
-      filesLoading,
-      uploading,
-      upload,
-      refresh,
       debug,
       sending,
       sendMessage,

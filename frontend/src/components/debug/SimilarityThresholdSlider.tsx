@@ -11,7 +11,7 @@ export function SimilarityThresholdSlider() {
   return (
     <div className="threshold-slider">
       <div className="threshold-header">
-        <label className="debug-label">????? (0?1)</label>
+        <label className="debug-label">相似度阈值 (0–1)</label>
         <Text className="threshold-value">{debug.similarityThreshold.toFixed(2)}</Text>
       </div>
       <div className="threshold-slider-track">
@@ -25,9 +25,9 @@ export function SimilarityThresholdSlider() {
         />
       </div>
       <div className="threshold-legend">
-        <span style={{ color: colors.success }}>? ?? ?0.70</span>
-        <span style={{ color: colors.warning }}>? ?? 0.40?0.70</span>
-        <span style={{ color: colors.danger }}>? ??? &lt;0.40</span>
+        <span style={{ color: colors.success }}>● 高相关 ≥0.70</span>
+        <span style={{ color: colors.warning }}>● 中相关 0.40–0.70</span>
+        <span style={{ color: colors.danger }}>● 低相关 &lt;0.40</span>
       </div>
     </div>
   );

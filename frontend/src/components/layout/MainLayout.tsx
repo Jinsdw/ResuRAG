@@ -14,7 +14,7 @@ export function MainLayout() {
         <Title level={4} className="main-logo">
           ResuRAG
         </Title>
-        <span className="main-subtitle">???? RAG ????</span>
+        <span className="main-subtitle">个人信息智能问答系统</span>
       </Header>
       <Layout className="main-body">
         <Sider width={280} className="main-sider main-sider--left">

@@ -10,7 +10,7 @@ export function MessageList() {
   if (messages.length === 0) {
     return (
       <div className="message-empty">
-        <Empty description="??????????????" />
+        <Empty description="向系统提问，获取基于个人资料的精准回答" />
       </div>
     );
   }

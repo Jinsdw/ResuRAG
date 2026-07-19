@@ -21,13 +21,15 @@
   font-size: 16px;
 
   &--user {
-    background: @color-accent;
+    background: @gradient-user-bubble;
     color: @color-white;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
   }
 
   &--assistant {
     background: @color-primary;
     color: @color-white;
+    box-shadow: @shadow-sm;
   }
 }
 
@@ -37,9 +39,10 @@
   border-radius: @radius-bubble;
 
   &--user {
-    background: @color-accent;
+    background: @gradient-user-bubble;
     color: @color-white;
     border-bottom-right-radius: 4px;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
 
     .message-content {
       color: @color-white;
@@ -51,6 +54,7 @@
     color: @color-primary;
     border: 1px solid @color-border;
     border-bottom-left-radius: 4px;
+    box-shadow: @shadow-sm;
   }
 }
 
@@ -58,4 +62,5 @@
   margin-bottom: 0 !important;
   white-space: pre-wrap;
   color: inherit;
+  line-height: 1.65;
 }
