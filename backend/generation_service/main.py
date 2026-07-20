@@ -175,6 +175,15 @@ async def generate(request: GenerationRequest):
 
     try:
         store.ensure_session(session_id, request.query)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    llm_messages = build_messages(
+        query=request.query,
+        chunks=request.chunks,
+        session_id=session_id,
+    )
+    try:
         store.add_message(
             session_id=session_id,
             message_id=user_message_id,
@@ -190,11 +199,6 @@ async def generate(request: GenerationRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    llm_messages = build_messages(
-        query=request.query,
-        chunks=request.chunks,
-    )
 
     return StreamingResponse(
         _stream_llm_response(llm_messages, assistant_message_id),
