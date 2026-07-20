@@ -11,6 +11,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** 模型思考过程（流式 reasoning） */
+  reasoning?: string;
   /** 未定义表示检索中；空数组表示检索完成但无命中 */
   citations?: Citation[];
   isStreaming?: boolean;

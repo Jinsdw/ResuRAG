@@ -71,13 +71,22 @@ export function useChat(
         }));
 
         let content = '';
+        let reasoning = '';
         for await (const event of streamGenerate(query.trim(), results)) {
           if (event.type === 'content') {
             content += event.content;
             updateSession(sessionId, (session) => ({
               ...session,
               messages: session.messages.map((msg) =>
-                msg.id === assistantId ? { ...msg, content } : msg,
+                msg.id === assistantId ? { ...msg, content, reasoning } : msg,
+              ),
+            }));
+          } else if (event.type === 'reasoning') {
+            reasoning += event.content;
+            updateSession(sessionId, (session) => ({
+              ...session,
+              messages: session.messages.map((msg) =>
+                msg.id === assistantId ? { ...msg, content, reasoning } : msg,
               ),
             }));
           } else if (event.type === 'error') {
