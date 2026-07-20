@@ -38,7 +38,6 @@ export function useChat(
         id: assistantId,
         role: 'assistant',
         content: '',
-        citations: [],
         isStreaming: true,
         timestamp: Date.now(),
       };
@@ -59,10 +58,10 @@ export function useChat(
         const results = await searchDocuments({
           query: query.trim(),
           topK: debug.topK,
+          similarityThreshold: debug.similarityThreshold,
         });
 
-        const filtered = results.filter((item) => item.score >= debug.similarityThreshold);
-        const citations = toCitations(filtered);
+        const citations = toCitations(results);
 
         updateSession(sessionId, (session) => ({
           ...session,
@@ -72,7 +71,7 @@ export function useChat(
         }));
 
         let content = '';
-        for await (const event of streamGenerate(query.trim(), filtered)) {
+        for await (const event of streamGenerate(query.trim(), results)) {
           if (event.type === 'content') {
             content += event.content;
             updateSession(sessionId, (session) => ({
@@ -98,7 +97,12 @@ export function useChat(
           ...session,
           messages: session.messages.map((msg) =>
             msg.id === assistantId
-              ? { ...msg, content: `抱歉，生成回答时出错：${message}`, isStreaming: false }
+              ? {
+                  ...msg,
+                  content: `抱歉，生成回答时出错：${message}`,
+                  isStreaming: false,
+                  citations: msg.citations ?? [],
+                }
               : msg,
           ),
         }));

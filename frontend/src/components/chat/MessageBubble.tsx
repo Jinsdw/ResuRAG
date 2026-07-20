@@ -1,7 +1,6 @@
 import { RobotOutlined, UserOutlined } from '@ant-design/icons';
 import { Spin, Typography } from 'antd';
 import type { ChatMessage } from '../../types';
-import { CitationList } from './CitationList';
 import './MessageBubble.less';
 
 const { Paragraph } = Typography;
@@ -23,9 +22,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <Spin size="small" />
         ) : (
           <Paragraph className="message-content">{message.content}</Paragraph>
-        )}
-        {!isUser && message.citations && message.citations.length > 0 && (
-          <CitationList citations={message.citations} />
         )}
       </div>
     </div>

@@ -1,0 +1,93 @@
+@import '../../styles/variables.less';
+
+.citation-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  &__loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    font-size: 12px;
+  }
+
+  &--empty {
+    .citation-empty {
+      font-size: 12px;
+      line-height: 1.6;
+    }
+  }
+}
+
+.citation-title {
+  display: block;
+  font-size: 13px;
+  color: @color-primary;
+  margin-bottom: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.citation-item {
+  background: @color-bg-tertiary;
+  border-radius: @radius-base;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid @color-border-light;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  &:hover {
+    border-color: @color-accent-light;
+    box-shadow: @shadow-sm;
+  }
+}
+
+.citation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.citation-source {
+  color: @color-primary;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.citation-content {
+  margin: 0;
+  font-size: 12px;
+  color: @color-text-secondary;
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+  cursor: default;
+
+  .citation-item:hover & {
+    color: @color-primary;
+  }
+}
+
+:global(.citation-content-tooltip) {
+  max-width: min(360px, 85vw);
+
+  .ant-tooltip-inner {
+    max-height: 280px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+}

@@ -18,6 +18,7 @@ class Retriever:
         top_k: int = 10,
         dense_weight: float = 0.7,
         filter_expr: Optional[str] = None,
+        similarity_threshold: float = 0.0,
     ) -> List[Dict[str, Any]]:
         query = (query or "").strip()
         if not query:
@@ -40,6 +41,10 @@ class Retriever:
 
         merged = self._merge_results(dense_results, sparse_results, dense_weight)
         sorted_results = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
+        if similarity_threshold > 0:
+            sorted_results = [
+                item for item in sorted_results if item["score"] >= similarity_threshold
+            ]
         return sorted_results[:top_k]
 
     def _extract_hit(self, hit) -> Dict[str, Any]:

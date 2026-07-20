@@ -25,6 +25,7 @@ class SearchRequest(BaseModel):
     query: str
     top_k: Optional[int] = Config.DEFAULT_TOP_K
     dense_weight: Optional[float] = Config.DENSE_WEIGHT
+    similarity_threshold: Optional[float] = 0.0
     filter_file_uuid: Optional[str] = None  # 可选：限定某个 file_uuid，不填则搜索全部
 
 class SearchResult(BaseModel):
@@ -65,7 +66,8 @@ async def search(request: SearchRequest):
             query=request.query,
             top_k=request.top_k,
             dense_weight=request.dense_weight,
-            filter_expr=filter_expr
+            filter_expr=filter_expr,
+            similarity_threshold=request.similarity_threshold or 0.0,
         )
         
         return SearchResponse(
@@ -92,15 +94,19 @@ async def search_dense(request: SearchRequest):
     )
     
     formatted = []
+    threshold = request.similarity_threshold or 0.0
     if results and len(results) > 0:
         for hit in results[0]:
+            score = hit.score
+            if threshold > 0 and score < threshold:
+                continue
             formatted.append({
                 "chunk_id": hit.entity.get("chunk_id", ""),
                 "content": hit.entity.get("content", ""),
                 "file_uuid": hit.entity.get("file_uuid", ""),
                 "source_file_name": hit.entity.get("source_file_name", ""),
                 "source_page": hit.entity.get("source_page", 0),
-                "score": hit.score,
+                "score": score,
                 "metadata": hit.entity.get("metadata", {})
             })
     
