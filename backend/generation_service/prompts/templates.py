@@ -52,6 +52,6 @@ def build_messages(query: str, chunks: list, max_chunks: int = 5) -> list:
     user_content = USER_TEMPLATE.format(query=query)
     
     return [
-        # {"role": "system", "content": [{"type": "text", "text": system_content}]},
+        {"role": "system", "content": [{"type": "text", "text": system_content}]},
         {"role": "user", "content": [{"type": "text", "text": user_content}]}
     ]
