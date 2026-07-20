@@ -13,11 +13,12 @@ function parseSseLine(line: string): StreamEvent | null {
 export async function* streamGenerate(
   query: string,
   chunks: SearchResult[],
+  sessionId: string,
 ): AsyncGenerator<StreamEvent> {
   const response = await fetch(`${GENERATION_BASE}/api/v1/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, chunks }),
+    body: JSON.stringify({ session_id: sessionId, query, chunks }),
   });
 
   if (!response.ok) {

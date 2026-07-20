@@ -1,41 +1,123 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Session } from '../types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ChatMessage, Session, SessionMeta } from '../types';
+import {
+  deleteSessionRemote,
+  fetchSessions,
+  invalidateSessionsCache,
+  mergeSessionMetas,
+} from '../services/sessionService';
 
-const STORAGE_KEY = 'resurag_sessions';
+const MESSAGES_KEY = 'resurag_session_messages';
 const ACTIVE_KEY = 'resurag_active_session';
 
-function loadSessions(): Session[] {
+function loadMessagesMap(): Record<string, ChatMessage[]> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Session[]) : [];
+    const raw = localStorage.getItem(MESSAGES_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, ChatMessage[]>) : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
-function createSession(): Session {
+function saveMessagesMap(map: Record<string, ChatMessage[]>) {
+  localStorage.setItem(MESSAGES_KEY, JSON.stringify(map));
+}
+
+function createLocalSession(): SessionMeta {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
     title: '新对话',
-    messages: [],
     createdAt: now,
     updatedAt: now,
+    persisted: false,
   };
 }
 
 export function useSessions() {
-  const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    const stored = localStorage.getItem(ACTIVE_KEY);
-    const list = loadSessions();
-    if (stored && list.some((s) => s.id === stored)) return stored;
-    return list[0]?.id ?? null;
-  });
+  const [sessionMetas, setSessionMetas] = useState<SessionMeta[]>([]);
+  const [messagesById, setMessagesById] = useState<Record<string, ChatMessage[]>>(
+    () => loadMessagesMap(),
+  );
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() =>
+    localStorage.getItem(ACTIVE_KEY),
+  );
+  const [loading, setLoading] = useState(true);
+
+  const metasRef = useRef(sessionMetas);
+  metasRef.current = sessionMetas;
+  const messagesRef = useRef(messagesById);
+  messagesRef.current = messagesById;
+
+  const sessions = useMemo<Session[]>(
+    () =>
+      [...sessionMetas]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((meta) => ({
+          ...meta,
+          messages: messagesById[meta.id] ?? [],
+        })),
+    [sessionMetas, messagesById],
+  );
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+
+  const applyRemoteSessions = useCallback((remoteSessions: SessionMeta[]) => {
+    setSessionMetas((prev) => mergeSessionMetas(prev, remoteSessions));
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    invalidateSessionsCache();
+    const remoteSessions = await fetchSessions({ force: true });
+    applyRemoteSessions(remoteSessions);
+  }, [applyRemoteSessions]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  }, [sessions]);
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const remoteSessions = await fetchSessions();
+        if (cancelled) return;
+
+        applyRemoteSessions(remoteSessions);
+        setActiveSessionId((current) => {
+          const allIds = new Set([
+            ...remoteSessions.map((item) => item.id),
+            ...Object.keys(loadMessagesMap()),
+          ]);
+          if (current && allIds.has(current)) return current;
+          return remoteSessions[0]?.id ?? null;
+        });
+      } catch {
+        if (!cancelled && sessionMetas.length === 0) {
+          const session = createLocalSession();
+          setSessionMetas([session]);
+          setActiveSessionId(session.id);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyRemoteSessions]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (sessionMetas.length === 0) {
+      const session = createLocalSession();
+      setSessionMetas([session]);
+      setActiveSessionId(session.id);
+      return;
+    }
+    if (!activeSessionId || !sessionMetas.some((item) => item.id === activeSessionId)) {
+      setActiveSessionId(sessionMetas[0].id);
+    }
+  }, [loading, sessionMetas, activeSessionId]);
 
   useEffect(() => {
     if (activeSessionId) {
@@ -43,13 +125,11 @@ export function useSessions() {
     }
   }, [activeSessionId]);
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
-
   const createNewSession = useCallback(() => {
-    const session = createSession();
-    setSessions((prev) => [session, ...prev]);
+    const session = createLocalSession();
+    setSessionMetas((prev) => [session, ...prev]);
     setActiveSessionId(session.id);
-    return session;
+    return { ...session, messages: [] };
   }, []);
 
   const selectSession = useCallback((id: string) => {
@@ -57,39 +137,72 @@ export function useSessions() {
   }, []);
 
   const updateSession = useCallback((id: string, updater: (session: Session) => Session) => {
-    setSessions((prev) =>
-      prev.map((session) => (session.id === id ? updater(session) : session)),
+    const meta = metasRef.current.find((item) => item.id === id);
+    if (!meta) return;
+
+    const current: Session = {
+      ...meta,
+      messages: messagesRef.current[id] ?? [],
+    };
+    const updated = updater(current);
+
+    const nextMessages = { ...messagesRef.current, [id]: updated.messages };
+    messagesRef.current = nextMessages;
+    setMessagesById(nextMessages);
+    saveMessagesMap(nextMessages);
+
+    setSessionMetas((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              title: updated.title,
+              updatedAt: updated.updatedAt,
+            }
+          : item,
+      ),
     );
   }, []);
 
   const deleteSession = useCallback(
-    (id: string) => {
-      setSessions((prev) => {
-        const next = prev.filter((s) => s.id !== id);
+    async (id: string) => {
+      const meta = metasRef.current.find((item) => item.id === id);
+      if (meta?.persisted) {
+        try {
+          await deleteSessionRemote(id);
+        } catch {
+          // 服务端已不存在时仍清理本地
+        }
+      }
+
+      setSessionMetas((prev) => {
+        const next = prev.filter((item) => item.id !== id);
         if (activeSessionId === id) {
           setActiveSessionId(next[0]?.id ?? null);
         }
+        return next;
+      });
+
+      setMessagesById((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        saveMessagesMap(next);
+        messagesRef.current = next;
         return next;
       });
     },
     [activeSessionId],
   );
 
-  useEffect(() => {
-    if (sessions.length === 0) {
-      createNewSession();
-    } else if (!activeSessionId) {
-      setActiveSessionId(sessions[0].id);
-    }
-  }, [sessions.length, activeSessionId, createNewSession]);
-
   return {
     sessions,
     activeSession,
     activeSessionId,
+    loading,
     createNewSession,
     selectSession,
     updateSession,
     deleteSession,
+    refreshSessions,
   };
-}
+};

@@ -9,7 +9,7 @@ interface AppContextValue {
   activeSessionId: string | null;
   createNewSession: () => Session;
   selectSession: (id: string) => void;
-  deleteSession: (id: string) => void;
+  deleteSession: (id: string) => Promise<void>;
   debug: DebugSettings;
   setDebug: (patch: Partial<DebugSettings>) => void;
   sending: boolean;
@@ -27,6 +27,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectSession,
     updateSession,
     deleteSession,
+    refreshSessions,
   } = useSessions();
 
   const [debug, setDebugState] = useState<DebugSettings>({
@@ -38,7 +39,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setDebugState((prev) => ({ ...prev, ...patch }));
   };
 
-  const { sending, sendMessage } = useChat(activeSession, updateSession, debug);
+  const { sending, sendMessage } = useChat(
+    activeSession,
+    updateSession,
+    debug,
+    refreshSessions,
+  );
 
   const value = useMemo<AppContextValue>(
     () => ({

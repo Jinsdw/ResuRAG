@@ -15,6 +15,12 @@ class Config:
     
     # ========== 服务配置 ==========
     PORT = int(os.getenv("GENERATION_PORT", 8004))
+    SESSION_DB_PATH = Path(
+        os.getenv(
+            "SESSION_DB_PATH",
+            str(Path(__file__).resolve().parent / "data" / "sessions.db"),
+        )
+    )
     
     # ========== 幻觉检测 ==========
     ENABLE_FAITHFULNESS_CHECK = os.getenv("ENABLE_FAITHFULNESS_CHECK", "true").lower() == "true"

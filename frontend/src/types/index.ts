@@ -19,12 +19,17 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export interface Session {
+export interface SessionMeta {
   id: string;
   title: string;
-  messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** 是否已持久化到服务端 */
+  persisted?: boolean;
+}
+
+export interface Session extends SessionMeta {
+  messages: ChatMessage[];
 }
 
 export interface SearchResult {

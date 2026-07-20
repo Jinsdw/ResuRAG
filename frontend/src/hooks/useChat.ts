@@ -18,6 +18,7 @@ export function useChat(
   activeSession: Session | null,
   updateSession: (id: string, updater: (session: Session) => Session) => void,
   debug: DebugSettings,
+  refreshSessions: () => Promise<void>,
 ) {
   const [sending, setSending] = useState(false);
 
@@ -72,7 +73,7 @@ export function useChat(
 
         let content = '';
         let reasoning = '';
-        for await (const event of streamGenerate(query.trim(), results)) {
+        for await (const event of streamGenerate(query.trim(), results, sessionId)) {
           if (event.type === 'content') {
             content += event.content;
             updateSession(sessionId, (session) => ({
@@ -100,6 +101,7 @@ export function useChat(
             msg.id === assistantId ? { ...msg, isStreaming: false } : msg,
           ),
         }));
+        await refreshSessions();
       } catch (error) {
         const message = error instanceof Error ? error.message : '发送失败';
         updateSession(sessionId, (session) => ({
@@ -119,7 +121,7 @@ export function useChat(
         setSending(false);
       }
     },
-    [activeSession, debug, sending, updateSession],
+    [activeSession, debug, sending, updateSession, refreshSessions],
   );
 
   return { sending, sendMessage };
