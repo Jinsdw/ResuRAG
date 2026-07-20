@@ -1,4 +1,4 @@
-import type { SearchResult, StreamEvent } from '../types';
+import type { Citation, SearchResult, StreamEvent } from '../types';
 import { GENERATION_BASE } from './api';
 
 function parseSseLine(line: string): StreamEvent | null {
@@ -10,15 +10,29 @@ function parseSseLine(line: string): StreamEvent | null {
   }
 }
 
+export interface GenerateOptions {
+  userMessageId: string;
+  assistantMessageId: string;
+  citations: Citation[];
+}
+
 export async function* streamGenerate(
   query: string,
   chunks: SearchResult[],
   sessionId: string,
+  options: GenerateOptions,
 ): AsyncGenerator<StreamEvent> {
   const response = await fetch(`${GENERATION_BASE}/api/v1/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, query, chunks }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      user_message_id: options.userMessageId,
+      assistant_message_id: options.assistantMessageId,
+      query,
+      chunks,
+      citations: options.citations,
+    }),
   });
 
   if (!response.ok) {

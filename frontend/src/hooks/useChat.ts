@@ -18,7 +18,7 @@ export function useChat(
   activeSession: Session | null,
   updateSession: (id: string, updater: (session: Session) => Session) => void,
   debug: DebugSettings,
-  refreshSessions: () => Promise<void>,
+  refreshSessions: (sessionId?: string) => Promise<void>,
 ) {
   const [sending, setSending] = useState(false);
 
@@ -73,7 +73,11 @@ export function useChat(
 
         let content = '';
         let reasoning = '';
-        for await (const event of streamGenerate(query.trim(), results, sessionId)) {
+        for await (const event of streamGenerate(query.trim(), results, sessionId, {
+          userMessageId: userMessage.id,
+          assistantMessageId: assistantId,
+          citations,
+        })) {
           if (event.type === 'content') {
             content += event.content;
             updateSession(sessionId, (session) => ({
@@ -101,7 +105,7 @@ export function useChat(
             msg.id === assistantId ? { ...msg, isStreaming: false } : msg,
           ),
         }));
-        await refreshSessions();
+        await refreshSessions(sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : '发送失败';
         updateSession(sessionId, (session) => ({

@@ -1,6 +1,8 @@
+import json
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -8,7 +10,7 @@ from config import Config
 
 
 class SessionStore:
-    """会话元数据 SQLite 存储（不含聊天记录）"""
+    """会话与聊天记录 SQLite 存储"""
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -19,6 +21,7 @@ class SessionStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def _migrate_schema(self, conn: sqlite3.Connection) -> None:
@@ -58,6 +61,28 @@ class SessionStore:
                     ON sessions(updated_at DESC)
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        message_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL DEFAULT '',
+                        reasoning TEXT,
+                        citations_json TEXT,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY (session_id)
+                            REFERENCES sessions(session_id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+                    ON chat_messages(session_id, created_at ASC)
+                    """
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -67,13 +92,38 @@ class SessionStore:
         return int(time.time() * 1000)
 
     @staticmethod
-    def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    def _session_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
         return {
             "session_id": row["session_id"],
             "subject": row["subject"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    @staticmethod
+    def _message_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+        citations = None
+        raw_citations = row["citations_json"]
+        if raw_citations:
+            try:
+                citations = json.loads(raw_citations)
+            except json.JSONDecodeError:
+                citations = None
+        return {
+            "message_id": row["message_id"],
+            "session_id": row["session_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "reasoning": row["reasoning"],
+            "citations": citations,
+            "created_at": row["created_at"],
+        }
+
+    @staticmethod
+    def _encode_citations(citations: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        if not citations:
+            return None
+        return json.dumps(citations, ensure_ascii=False)
 
     def get(self, session_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -86,7 +136,7 @@ class SessionStore:
                     """,
                     (session_id,),
                 ).fetchone()
-                return self._row_to_dict(row) if row else None
+                return self._session_row_to_dict(row) if row else None
             finally:
                 conn.close()
 
@@ -101,7 +151,7 @@ class SessionStore:
                     ORDER BY updated_at DESC
                     """
                 ).fetchall()
-                return [self._row_to_dict(row) for row in rows]
+                return [self._session_row_to_dict(row) for row in rows]
             finally:
                 conn.close()
 
@@ -170,6 +220,126 @@ class SessionStore:
                 )
                 conn.commit()
                 return cursor.rowcount > 0
+            finally:
+                conn.close()
+
+    def add_message(
+        self,
+        session_id: str,
+        message_id: str,
+        role: str,
+        content: str = "",
+        reasoning: Optional[str] = None,
+        citations: Optional[List[Dict[str, Any]]] = None,
+        created_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        message_id = (message_id or "").strip() or str(uuid.uuid4())
+        role = (role or "").strip()
+        if role not in {"user", "assistant"}:
+            raise ValueError("role 必须为 user 或 assistant")
+
+        now = created_at or self._now_ms()
+        citations_json = self._encode_citations(citations)
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO chat_messages (
+                        message_id, session_id, role, content,
+                        reasoning, citations_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        session_id,
+                        role,
+                        content,
+                        reasoning,
+                        citations_json,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                    (now, session_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        return {
+            "message_id": message_id,
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+            "reasoning": reasoning,
+            "citations": citations,
+            "created_at": now,
+        }
+
+    def update_message(
+        self,
+        message_id: str,
+        content: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        citations: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        fields: List[str] = []
+        values: List[Any] = []
+
+        if content is not None:
+            fields.append("content = ?")
+            values.append(content)
+        if reasoning is not None:
+            fields.append("reasoning = ?")
+            values.append(reasoning)
+        if citations is not None:
+            fields.append("citations_json = ?")
+            values.append(self._encode_citations(citations))
+
+        if not fields:
+            return False
+
+        values.append(message_id)
+        with self._lock:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    f"UPDATE chat_messages SET {', '.join(fields)} WHERE message_id = ?",
+                    values,
+                )
+                if cursor.rowcount > 0:
+                    row = conn.execute(
+                        "SELECT session_id FROM chat_messages WHERE message_id = ?",
+                        (message_id,),
+                    ).fetchone()
+                    if row:
+                        conn.execute(
+                            "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
+                            (self._now_ms(), row["session_id"]),
+                        )
+                conn.commit()
+                return cursor.rowcount > 0
+            finally:
+                conn.close()
+
+    def list_messages(self, session_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT message_id, session_id, role, content,
+                           reasoning, citations_json, created_at
+                    FROM chat_messages
+                    WHERE session_id = ?
+                    ORDER BY created_at ASC, message_id ASC
+                    """,
+                    (session_id,),
+                ).fetchall()
+                return [self._message_row_to_dict(row) for row in rows]
             finally:
                 conn.close()
 

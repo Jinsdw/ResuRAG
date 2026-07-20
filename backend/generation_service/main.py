@@ -1,7 +1,7 @@
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -30,8 +30,11 @@ app = FastAPI(title="生成服务 (Generation Service)", version="1.0.0", lifesp
 
 class GenerationRequest(BaseModel):
     session_id: str = Field(..., min_length=1, description="前端会话 ID")
+    user_message_id: str = Field(..., min_length=1, description="用户消息 ID")
+    assistant_message_id: str = Field(..., min_length=1, description="助手消息 ID")
     query: str
     chunks: list
+    citations: Optional[List[Dict[str, Any]]] = None
     enable_faithfulness: Optional[bool] = Config.ENABLE_FAITHFULNESS_CHECK
 
 
@@ -45,6 +48,22 @@ class SessionResponse(BaseModel):
 class SessionListResponse(BaseModel):
     total: int
     sessions: List[SessionResponse]
+
+
+class ChatMessageResponse(BaseModel):
+    message_id: str
+    session_id: str
+    role: str
+    content: str
+    reasoning: Optional[str] = None
+    citations: Optional[List[Dict[str, Any]]] = None
+    created_at: int
+
+
+class ChatMessageListResponse(BaseModel):
+    session_id: str
+    total: int
+    messages: List[ChatMessageResponse]
 
 
 def _extract_stream_delta(chunk) -> tuple[str | None, str | None]:
@@ -62,20 +81,40 @@ def _sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def _stream_llm_response(messages: list) -> Iterator[str]:
-    """将 LLM 流式 chunk 转为 SSE 格式"""
+def _stream_llm_response(
+    messages: list,
+    assistant_message_id: str,
+) -> Iterator[str]:
+    """将 LLM 流式 chunk 转为 SSE 格式，并在结束时持久化助手消息"""
+    store = get_session_store()
     llm = get_llm_client()
+    content_parts: List[str] = []
+    reasoning_parts: List[str] = []
+
     try:
         for chunk in llm.generate_stream(messages=messages):
             content, reasoning = _extract_stream_delta(chunk)
             if content:
+                content_parts.append(content)
                 yield _sse_event({"type": "content", "content": content})
             if reasoning:
+                reasoning_parts.append(reasoning)
                 yield _sse_event({"type": "reasoning", "content": reasoning})
         yield _sse_event({"type": "done"})
     except Exception as e:
         logger.error(f"流式生成失败: {e}")
         yield _sse_event({"type": "error", "message": str(e)})
+    finally:
+        final_content = "".join(content_parts)
+        final_reasoning = "".join(reasoning_parts) or None
+        if final_content or final_reasoning:
+            store.update_message(
+                assistant_message_id,
+                content=final_content,
+                reasoning=final_reasoning,
+            )
+        elif not content_parts and not reasoning_parts:
+            store.update_message(assistant_message_id, content="")
 
 
 # ============ 会话接口 ============
@@ -90,9 +129,26 @@ async def list_sessions():
     return SessionListResponse(total=len(sessions), sessions=sessions)
 
 
+@app.get("/api/v1/sessions/{session_id}/messages", response_model=ChatMessageListResponse)
+async def list_session_messages(session_id: str):
+    """获取指定会话的聊天记录"""
+    store = get_session_store()
+    session_id = session_id.strip()
+    if not store.get(session_id):
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    rows = store.list_messages(session_id)
+    messages = [ChatMessageResponse(**row) for row in rows]
+    return ChatMessageListResponse(
+        session_id=session_id,
+        total=len(messages),
+        messages=messages,
+    )
+
+
 @app.delete("/api/v1/sessions/{session_id}")
 async def delete_session(session_id: str):
-    """删除会话记录"""
+    """删除会话及其聊天记录"""
     store = get_session_store()
     deleted = store.delete(session_id.strip())
     if not deleted:
@@ -105,7 +161,7 @@ async def delete_session(session_id: str):
 
 @app.post("/api/v1/generate")
 async def generate(request: GenerationRequest):
-    """流式生成回答（SSE），并在首次请求时创建会话记录"""
+    """流式生成回答（SSE），并持久化聊天记录"""
     logger.info(
         "收到生成请求: session=%s query=%s...",
         request.session_id,
@@ -113,18 +169,35 @@ async def generate(request: GenerationRequest):
     )
 
     store = get_session_store()
+    session_id = request.session_id.strip()
+    user_message_id = request.user_message_id.strip()
+    assistant_message_id = request.assistant_message_id.strip()
+
     try:
-        store.ensure_session(request.session_id.strip(), request.query)
+        store.ensure_session(session_id, request.query)
+        store.add_message(
+            session_id=session_id,
+            message_id=user_message_id,
+            role="user",
+            content=request.query.strip(),
+        )
+        store.add_message(
+            session_id=session_id,
+            message_id=assistant_message_id,
+            role="assistant",
+            content="",
+            citations=request.citations,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    messages = build_messages(
+    llm_messages = build_messages(
         query=request.query,
         chunks=request.chunks,
     )
 
     return StreamingResponse(
-        _stream_llm_response(messages),
+        _stream_llm_response(llm_messages, assistant_message_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -2,26 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, Session, SessionMeta } from '../types';
 import {
   deleteSessionRemote,
+  fetchSessionMessages,
   fetchSessions,
   invalidateSessionsCache,
   mergeSessionMetas,
 } from '../services/sessionService';
 
-const MESSAGES_KEY = 'resurag_session_messages';
 const ACTIVE_KEY = 'resurag_active_session';
-
-function loadMessagesMap(): Record<string, ChatMessage[]> {
-  try {
-    const raw = localStorage.getItem(MESSAGES_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, ChatMessage[]>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveMessagesMap(map: Record<string, ChatMessage[]>) {
-  localStorage.setItem(MESSAGES_KEY, JSON.stringify(map));
-}
 
 function createLocalSession(): SessionMeta {
   const now = Date.now();
@@ -36,9 +23,7 @@ function createLocalSession(): SessionMeta {
 
 export function useSessions() {
   const [sessionMetas, setSessionMetas] = useState<SessionMeta[]>([]);
-  const [messagesById, setMessagesById] = useState<Record<string, ChatMessage[]>>(
-    () => loadMessagesMap(),
-  );
+  const [messagesById, setMessagesById] = useState<Record<string, ChatMessage[]>>({});
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() =>
     localStorage.getItem(ACTIVE_KEY),
   );
@@ -66,11 +51,39 @@ export function useSessions() {
     setSessionMetas((prev) => mergeSessionMetas(prev, remoteSessions));
   }, []);
 
-  const refreshSessions = useCallback(async () => {
-    invalidateSessionsCache();
-    const remoteSessions = await fetchSessions({ force: true });
-    applyRemoteSessions(remoteSessions);
-  }, [applyRemoteSessions]);
+  const loadSessionMessages = useCallback(async (sessionId: string) => {
+    try {
+      const messages = await fetchSessionMessages(sessionId);
+      setMessagesById((prev) => {
+        const next = { ...prev, [sessionId]: messages };
+        messagesRef.current = next;
+        return next;
+      });
+    } catch {
+      setMessagesById((prev) => {
+        const next = { ...prev, [sessionId]: [] };
+        messagesRef.current = next;
+        return next;
+      });
+    }
+  }, []);
+
+  const refreshSessions = useCallback(
+    async (sessionId?: string) => {
+      invalidateSessionsCache();
+      const remoteSessions = await fetchSessions({ force: true });
+      applyRemoteSessions(remoteSessions);
+
+      const targetId = sessionId ?? activeSessionId;
+      if (!targetId) return;
+
+      const meta = remoteSessions.find((item) => item.id === targetId);
+      if (meta?.persisted) {
+        await loadSessionMessages(targetId);
+      }
+    },
+    [activeSessionId, applyRemoteSessions, loadSessionMessages],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -82,11 +95,8 @@ export function useSessions() {
 
         applyRemoteSessions(remoteSessions);
         setActiveSessionId((current) => {
-          const allIds = new Set([
-            ...remoteSessions.map((item) => item.id),
-            ...Object.keys(loadMessagesMap()),
-          ]);
-          if (current && allIds.has(current)) return current;
+          const remoteIds = new Set(remoteSessions.map((item) => item.id));
+          if (current && remoteIds.has(current)) return current;
           return remoteSessions[0]?.id ?? null;
         });
       } catch {
@@ -120,6 +130,14 @@ export function useSessions() {
   }, [loading, sessionMetas, activeSessionId]);
 
   useEffect(() => {
+    if (!activeSessionId || loading) return;
+    const meta = metasRef.current.find((item) => item.id === activeSessionId);
+    if (meta?.persisted) {
+      void loadSessionMessages(activeSessionId);
+    }
+  }, [activeSessionId, loading, loadSessionMessages]);
+
+  useEffect(() => {
     if (activeSessionId) {
       localStorage.setItem(ACTIVE_KEY, activeSessionId);
     }
@@ -149,7 +167,6 @@ export function useSessions() {
     const nextMessages = { ...messagesRef.current, [id]: updated.messages };
     messagesRef.current = nextMessages;
     setMessagesById(nextMessages);
-    saveMessagesMap(nextMessages);
 
     setSessionMetas((prev) =>
       prev.map((item) =>
@@ -158,6 +175,7 @@ export function useSessions() {
               ...item,
               title: updated.title,
               updatedAt: updated.updatedAt,
+              persisted: item.persisted,
             }
           : item,
       ),
@@ -186,7 +204,6 @@ export function useSessions() {
       setMessagesById((prev) => {
         const next = { ...prev };
         delete next[id];
-        saveMessagesMap(next);
         messagesRef.current = next;
         return next;
       });
