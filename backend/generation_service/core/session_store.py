@@ -39,6 +39,10 @@ class SessionStore:
             conn.execute("ALTER TABLE sessions RENAME COLUMN id TO session_id")
         if "title" in columns and "subject" not in columns:
             conn.execute("ALTER TABLE sessions RENAME COLUMN title TO subject")
+        if "fingerprint" not in columns:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''"
+            )
 
     def _init_db(self) -> None:
         with self._lock:
@@ -49,6 +53,7 @@ class SessionStore:
                     """
                     CREATE TABLE IF NOT EXISTS sessions (
                         session_id TEXT PRIMARY KEY,
+                        fingerprint TEXT NOT NULL DEFAULT '',
                         subject TEXT NOT NULL,
                         created_at INTEGER NOT NULL,
                         updated_at INTEGER NOT NULL
@@ -140,7 +145,8 @@ class SessionStore:
             finally:
                 conn.close()
 
-    def list_all(self) -> List[Dict[str, Any]]:
+    def list_all(self, fingerprint: str) -> List[Dict[str, Any]]:
+        fingerprint = (fingerprint or "").strip()
         with self._lock:
             conn = self._connect()
             try:
@@ -148,10 +154,24 @@ class SessionStore:
                     """
                     SELECT session_id, subject, created_at, updated_at
                     FROM sessions
+                    WHERE fingerprint = ?
                     ORDER BY updated_at DESC
-                    """
+                    """,
+                    (fingerprint,),
                 ).fetchall()
                 return [self._session_row_to_dict(row) for row in rows]
+            finally:
+                conn.close()
+
+    def _get_session_fingerprint(self, session_id: str) -> Optional[str]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT fingerprint FROM sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                return row["fingerprint"] if row else None
             finally:
                 conn.close()
 
@@ -159,19 +179,22 @@ class SessionStore:
         self,
         session_id: str,
         subject: str,
+        fingerprint: str,
         now_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         now = now_ms or self._now_ms()
         safe_subject = (subject or "新对话").strip()[:30] or "新对话"
+        fp = (fingerprint or "").strip()
         with self._lock:
             conn = self._connect()
             try:
                 conn.execute(
                     """
-                    INSERT INTO sessions (session_id, subject, created_at, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO sessions (
+                        session_id, fingerprint, subject, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
                     """,
-                    (session_id, safe_subject, now, now),
+                    (session_id, fp, safe_subject, now, now),
                 )
                 conn.commit()
             finally:
@@ -196,19 +219,30 @@ class SessionStore:
             finally:
                 conn.close()
 
-    def ensure_session(self, session_id: str, subject: str) -> Dict[str, Any]:
-        """不存在则创建，存在则更新 updated_at"""
+    def ensure_session(
+        self,
+        session_id: str,
+        subject: str,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        """不存在则创建，存在则校验指纹并更新 updated_at"""
         session_id = (session_id or "").strip()
+        fp = (fingerprint or "").strip()
         if not session_id:
             raise ValueError("session_id 不能为空")
+        if not fp:
+            raise ValueError("fingerprint 不能为空")
 
         existing = self.get(session_id)
         if existing:
+            stored_fp = self._get_session_fingerprint(session_id)
+            if stored_fp != fp:
+                raise ValueError("会话不存在或无权访问")
             now = self._now_ms()
             self.touch(session_id, now)
             existing["updated_at"] = now
             return existing
-        return self.create(session_id, subject)
+        return self.create(session_id, subject, fp)
 
     def delete(self, session_id: str) -> bool:
         with self._lock:

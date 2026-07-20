@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,14 @@ from prompts.templates import build_messages
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+FINGERPRINT_HEADER = "X-Browser-Fingerprint"
+
+
+def _read_fingerprint(x_browser_fingerprint: Optional[str] = Header(None, alias=FINGERPRINT_HEADER)) -> str:
+    fingerprint = (x_browser_fingerprint or "").strip()
+    if not fingerprint:
+        raise HTTPException(status_code=400, detail=f"缺少请求头 {FINGERPRINT_HEADER}")
+    return fingerprint
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -121,13 +129,15 @@ def _stream_llm_response(
 
 
 @app.get("/api/v1/sessions", response_model=SessionListResponse)
-async def list_sessions():
-    """获取会话列表（按更新时间倒序）"""
+async def list_sessions(
+    x_browser_fingerprint: Optional[str] = Header(None, alias=FINGERPRINT_HEADER),
+):
+    """获取当前浏览器指纹下的会话列表"""
+    fingerprint = _read_fingerprint(x_browser_fingerprint)
     store = get_session_store()
-    rows = store.list_all()
+    rows = store.list_all(fingerprint)
     sessions = [SessionResponse(**row) for row in rows]
     return SessionListResponse(total=len(sessions), sessions=sessions)
-
 
 @app.get("/api/v1/sessions/{session_id}/messages", response_model=ChatMessageListResponse)
 async def list_session_messages(session_id: str):
@@ -160,8 +170,12 @@ async def delete_session(session_id: str):
 
 
 @app.post("/api/v1/generate")
-async def generate(request: GenerationRequest):
+async def generate(
+    request: GenerationRequest,
+    x_browser_fingerprint: Optional[str] = Header(None, alias=FINGERPRINT_HEADER),
+):
     """流式生成回答（SSE），并持久化聊天记录"""
+    fingerprint = _read_fingerprint(x_browser_fingerprint)
     logger.info(
         "收到生成请求: session=%s query=%s...",
         request.session_id,
@@ -174,7 +188,7 @@ async def generate(request: GenerationRequest):
     assistant_message_id = request.assistant_message_id.strip()
 
     try:
-        store.ensure_session(session_id, request.query)
+        store.ensure_session(session_id, request.query, fingerprint)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -1,4 +1,5 @@
 import type { Citation, SearchResult, StreamEvent } from '../types';
+import { withFingerprintHeaders } from '../utils/fingerprint';
 import { GENERATION_BASE } from './api';
 
 function parseSseLine(line: string): StreamEvent | null {
@@ -24,7 +25,7 @@ export async function* streamGenerate(
 ): AsyncGenerator<StreamEvent> {
   const response = await fetch(`${GENERATION_BASE}/api/v1/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withFingerprintHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       session_id: sessionId,
       user_message_id: options.userMessageId,
