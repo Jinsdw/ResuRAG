@@ -22,7 +22,7 @@ npm install
 npm run dev
 ```
 
-访问 http://localhost:5173 ，需先启动后端各服务（见项目根目录 README）。
+访问 http://localhost:3000 ，需先启动后端各服务（见项目根目录 README）。
 
 ## 目录结构
 
