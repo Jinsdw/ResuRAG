@@ -106,8 +106,8 @@ pip install -r requirements.txt
 
 # 各开一个终端
 python doc_service/main.py
-python indexing_service/main.py
 python retrieval_service/main.py
+python indexing_service/main.py
 python generation_service/main.py
 ```
 

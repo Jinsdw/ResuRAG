@@ -21,20 +21,27 @@ class RAGIngestionPipeline:
         layers = ["1_raw", "2_parsed", "3_chunks", "4_index"]
         for layer in layers:
             (self.base / layer).mkdir(parents=True, exist_ok=True)
+        self._ensure_registry()
 
+    def _ensure_registry(self) -> Path:
         registry_path = self.base / "file_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
         if not registry_path.exists():
-            with open(registry_path, "w") as f:
-                json.dump([], f)
+            with open(registry_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False)
+        return registry_path
 
     def _get_registry(self) -> List[Dict]:
-        with open(self.base / "file_registry.json", "r") as f:
-            return json.load(f)
+        registry_path = self._ensure_registry()
+        with open(registry_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
 
     def _update_registry(self, entry: Dict):
+        registry_path = self._ensure_registry()
         registry = self._get_registry()
         registry.append(entry)
-        with open(self.base / "file_registry.json", "w") as f:
+        with open(registry_path, "w", encoding="utf-8") as f:
             json.dump(registry, f, indent=2, ensure_ascii=False)
 
     async def upload_and_chunk(
