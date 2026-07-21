@@ -27,7 +27,9 @@ app = FastAPI(title="索引服务 (Indexing Service)", version="1.0.0", lifespan
 class IndexRequest(BaseModel):
     file_uuid: str
     tenant_id: str = "default"
-    chunk_dir: str  # 相对于 rag_storage 的切块目录，例如 3_chunks/default/<file_uuid>
+
+class IndexTenantRequest(BaseModel):
+    tenant_id: str = "default"
 
 class IndexResponse(BaseModel):
     status: str
@@ -45,18 +47,14 @@ def load_chunks_from_dir(chunk_dir: Path) -> List[Dict]:
             chunks.append(json.load(f))
     return chunks
 
-def resolve_chunk_dir(chunk_dir: str) -> Path:
-    """解析切块目录，兼容 Windows 反斜杠和单文件路径。"""
-    normalized = chunk_dir.replace("\\", "/").strip("/")
-    full_path = Path(Config.BASE_ROOT) / normalized
-    if full_path.is_file():
-        full_path = full_path.parent
-    return full_path
+def resolve_chunk_dir(tenant_id: str, file_uuid: str) -> Path:
+    """根据 tenant_id 和 file_uuid 自动构建切块目录路径。"""
+    return Path(Config.BASE_ROOT) / "3_chunks" / tenant_id / file_uuid
 
 
-def index_file(file_uuid: str, chunk_dir: str, tenant_id: str = "default") -> Dict:
+def index_file(file_uuid: str, tenant_id: str = "default") -> Dict:
     """索引单个文件的所有切块"""
-    full_chunk_dir = resolve_chunk_dir(chunk_dir)
+    full_chunk_dir = resolve_chunk_dir(tenant_id, file_uuid)
     print(f"full_chunk_dir: {full_chunk_dir}")
     if not full_chunk_dir.exists():
         raise FileNotFoundError(f"切块目录不存在: {full_chunk_dir}")
@@ -66,7 +64,7 @@ def index_file(file_uuid: str, chunk_dir: str, tenant_id: str = "default") -> Di
     # 1. 加载切块
     chunks = load_chunks_from_dir(full_chunk_dir)
     if not chunks:
-        raise ValueError(f"未找到任何切块: {chunk_dir}")
+        raise ValueError(f"未找到任何切块: {full_chunk_dir}")
     
     # 2. 获取embedder
     embedder = get_embedder()
@@ -116,7 +114,6 @@ async def index_chunks(request: IndexRequest):
     try:
         result = index_file(
             file_uuid=request.file_uuid,
-            chunk_dir=request.chunk_dir,
             tenant_id=request.tenant_id
         )
         return {"code": 0, "message": "success", "data": result}
@@ -124,6 +121,38 @@ async def index_chunks(request: IndexRequest):
         raise HTTPException(404, str(e))
     except Exception as e:
         raise HTTPException(500, f"索引失败: {e!r}")
+
+@app.post("/api/v1/index/tenant")
+async def index_tenant(request: IndexTenantRequest):
+    """索引指定租户下的所有文档切块"""
+    tenant_chunk_dir = Path(Config.BASE_ROOT) / "3_chunks" / request.tenant_id
+    if not tenant_chunk_dir.exists():
+        raise HTTPException(404, f"租户切块目录不存在: {tenant_chunk_dir}")
+
+    results = []
+    errors = []
+    for file_dir in sorted(tenant_chunk_dir.iterdir()):
+        if not file_dir.is_dir():
+            continue
+        file_uuid = file_dir.name
+        try:
+            result = index_file(file_uuid=file_uuid, tenant_id=request.tenant_id)
+            results.append(result)
+        except Exception as e:
+            errors.append({"file_uuid": file_uuid, "error": str(e)})
+
+    return {
+        "code": 0,
+        "message": "success",
+        "data": {
+            "tenant_id": request.tenant_id,
+            "total_files": len(results) + len(errors),
+            "indexed_files": len(results),
+            "failed_files": len(errors),
+            "results": results,
+            "errors": errors
+        }
+    }
 
 @app.get("/api/v1/health")
 async def health():

@@ -105,9 +105,13 @@ docker compose up -d
 pip install -r requirements.txt
 
 # 各开一个终端
+# 文档切分服务
 python doc_service/main.py
-python retrieval_service/main.py
+# 向量入库服务
 python indexing_service/main.py
+# 检索服务
+python retrieval_service/main.py
+# LLM生成服务
 python generation_service/main.py
 ```
 

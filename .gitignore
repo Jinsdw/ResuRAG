@@ -7,6 +7,7 @@ __pycache__/
 *.so
 
 node_modules/
+rag_storage/
 volumes/
 models/
 
