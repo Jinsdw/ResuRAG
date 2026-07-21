@@ -6,6 +6,7 @@ __pycache__/
 # C extensions
 *.so
 
+docs/
 node_modules/
 rag_storage/
 volumes/
