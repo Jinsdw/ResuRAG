@@ -54,9 +54,9 @@ export function DebugPanel() {
           <label className="debug-label">检索 Top-K</label>
           <InputNumber
             min={1}
-            max={20}
+            max={10}
             value={debug.topK}
-            onChange={(value) => setDebug({ topK: value ?? 10 })}
+            onChange={(value) => setDebug({ topK: value ?? 5 })}
             className="topk-input"
           />
         </div>

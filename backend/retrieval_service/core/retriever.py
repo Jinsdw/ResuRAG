@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from config import Config
 from .embedder import encode_sparse_text, get_embedder
 from .milvus_client import get_milvus_client
 
@@ -11,6 +12,7 @@ class Retriever:
     def __init__(self):
         self.embedder = get_embedder()
         self.milvus = get_milvus_client()
+        self.candidate_count = Config.CANDIDATE_COUNT
 
     def hybrid_search(
         self,
@@ -24,27 +26,37 @@ class Retriever:
         if not query:
             return []
 
+        # top_k 仅为最终采纳条数，上限不超过 MAX_TOP_K
+        top_k = min(top_k, Config.MAX_TOP_K)
+
         dense_vector = self.embedder.encode_query_vector(query)
         sparse_vector = encode_sparse_text(query)
 
+        # 固定从 Milvus 检索 candidate_count 条候选
+        candidate_n = self.candidate_count
         dense_results = self.milvus.search_dense(
-            dense_vector, top_k=top_k * 2, filter_expr=filter_expr
+            dense_vector, top_k=candidate_n, filter_expr=filter_expr
         )
         sparse_results = []
         if sparse_vector:
             try:
                 sparse_results = self.milvus.search_sparse(
-                    sparse_vector, top_k=top_k * 2, filter_expr=filter_expr
+                    sparse_vector, top_k=candidate_n, filter_expr=filter_expr
                 )
             except Exception as exc:
                 logger.warning("稀疏检索失败，降级为仅稠密检索: %r", exc)
 
+        # 合并 + 按相关性排序
         merged = self._merge_results(dense_results, sparse_results, dense_weight)
         sorted_results = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
+
+        # 相似度阈值过滤
         if similarity_threshold > 0:
             sorted_results = [
                 item for item in sorted_results if item["score"] >= similarity_threshold
             ]
+
+        # top_k 仅决定排序后采纳多少条
         return sorted_results[:top_k]
 
     def _extract_hit(self, hit) -> Dict[str, Any]:

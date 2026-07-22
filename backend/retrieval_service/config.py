@@ -17,6 +17,8 @@ class Config:
     
     # 检索参数
     DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", 10))
+    MAX_TOP_K = 10  # Top-K 上限：最终采纳的条数
+    CANDIDATE_COUNT = int(os.getenv("CANDIDATE_COUNT", 10))  # 每次从 Milvus 固定检索的候选数
     DENSE_WEIGHT = float(os.getenv("DENSE_WEIGHT", 0.7))   # 稠密向量权重
     SPARSE_WEIGHT = float(os.getenv("SPARSE_WEIGHT", 0.3)) # 稀疏向量权重
     

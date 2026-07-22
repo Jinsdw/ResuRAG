@@ -32,7 +32,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [debug, setDebugState] = useState<DebugSettings>({
     similarityThreshold: 0.3,
-    topK: 10,
+    topK: 5,
   });
 
   const setDebug = (patch: Partial<DebugSettings>) => {
