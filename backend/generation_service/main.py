@@ -14,6 +14,16 @@ from core.session_store import get_session_store
 from prompts.templates import build_messages, build_direct_chat_messages
 from prompts.rewrite import build_rewrite_prompt
 from prompts.judge import build_judge_prompt
+from prompts.suggestions import (
+    build_suggestions_prompt,
+    get_default_suggestion_list,
+    parse_suggestions,
+)
+from core.qa_pool import (
+    filter_unasked,
+    is_similar_question,
+    load_qa_questions,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +40,7 @@ def _read_fingerprint(x_browser_fingerprint: Optional[str] = Header(None, alias=
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_session_store()
+    load_qa_questions(force_reload=True)
     logger.info("会话数据库就绪: %s", Config.SESSION_DB_PATH)
     yield
 
@@ -77,6 +88,14 @@ class ChatMessageListResponse(BaseModel):
     session_id: str
     total: int
     messages: List[ChatMessageResponse]
+
+
+class SuggestionsRequest(BaseModel):
+    session_id: str = Field(..., min_length=1)
+
+
+class SuggestionsResponse(BaseModel):
+    suggestions: List[str]
 
 
 def _extract_stream_delta(chunk) -> tuple[str | None, str | None]:
@@ -204,6 +223,43 @@ def _load_history_for_rewrite(session_id: str, max_turns: int = 6) -> str:
     return "\n".join(lines)
 
 
+def _extract_asked_questions(session_id: str) -> List[str]:
+    """提取本会话中面试官已提出的问题（去重）。"""
+    store = get_session_store()
+    rows = store.list_messages(session_id)
+    asked: List[str] = []
+    for row in rows:
+        if row.get("role") != "user":
+            continue
+        content = (row.get("content") or "").strip()
+        if not content:
+            continue
+        if any(is_similar_question(content, prev) for prev in asked):
+            continue
+        asked.append(content)
+    return asked
+
+
+def _load_history_for_suggestions(session_id: str, max_turns: int = 8) -> str:
+    """加载对话历史，供猜你想问生成使用。"""
+    store = get_session_store()
+    rows = store.list_messages(session_id)
+    lines: List[str] = []
+    candidate = Config.CANDIDATE_NAME
+    for row in rows:
+        role = row.get("role", "")
+        content = (row.get("content") or "").strip()
+        if not content:
+            continue
+        label = "面试官" if role == "user" else candidate
+        lines.append(f"{label}：{content}")
+    if not lines:
+        return "（无历史对话）"
+    if len(lines) > max_turns * 2:
+        lines = lines[-(max_turns * 2) :]
+    return "\n".join(lines)
+
+
 def _normalize_rewrite_text(text: str, fallback: str) -> str:
     """清理改写模型输出，失败时回退原始问题。"""
     cleaned = (text or "").strip()
@@ -295,6 +351,65 @@ async def _retrieve_chunks(
         except Exception as exc:
             logger.error("检索服务调用失败: %s", exc)
             return [], str(exc)
+
+
+@app.get("/api/v1/suggestions/default", response_model=SuggestionsResponse)
+async def get_default_suggestions_endpoint():
+    """返回新建会话时的默认「猜你想问」，问题来自全景文档 QA。"""
+    return SuggestionsResponse(suggestions=get_default_suggestion_list())
+
+
+@app.post("/api/v1/suggestions", response_model=SuggestionsResponse)
+async def get_suggestions(
+    request: SuggestionsRequest,
+    x_browser_fingerprint: Optional[str] = Header(None, alias=FINGERPRINT_HEADER),
+):
+    """结合会话历史 + 简历/全景文档生成「猜你想问」，排除本会话已问问题。"""
+    _read_fingerprint(x_browser_fingerprint)
+    session_id = request.session_id.strip()
+    store = get_session_store()
+    asked = _extract_asked_questions(session_id)
+    defaults = get_default_suggestion_list(asked=asked)
+
+    if not store.get(session_id):
+        return SuggestionsResponse(suggestions=defaults)
+
+    history = _load_history_for_suggestions(session_id)
+    if history == "（无历史对话）":
+        return SuggestionsResponse(suggestions=defaults)
+
+    available_pool = filter_unasked(load_qa_questions(), asked)
+    if len(available_pool) < 2:
+        logger.info(
+            "猜你想问: session=%s 可选问题不足，返回默认补齐",
+            session_id,
+        )
+        return SuggestionsResponse(suggestions=defaults)
+
+    llm = get_llm_client()
+    messages = build_suggestions_prompt(
+        history,
+        asked_questions=asked,
+        available_pool=available_pool,
+    )
+    try:
+        raw = llm.generate_sync(messages, enable_thinking=False)
+        suggestions = parse_suggestions(
+            raw,
+            asked_questions=asked,
+            available_pool=available_pool,
+            fallback=defaults,
+        )
+        logger.info(
+            "猜你想问生成: session=%s asked=%d picked=%d",
+            session_id,
+            len(asked),
+            len(suggestions),
+        )
+        return SuggestionsResponse(suggestions=suggestions)
+    except Exception as exc:
+        logger.warning("猜你想问生成失败，使用默认推荐: %s", exc)
+        return SuggestionsResponse(suggestions=defaults)
 
 
 async def _generate_pipeline_stream(

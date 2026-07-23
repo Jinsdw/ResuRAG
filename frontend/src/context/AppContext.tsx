@@ -1,6 +1,7 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DebugSettings, Session } from '../types';
 import { useChat } from '../hooks/useChat';
+import { useSuggestedQuestions } from '../hooks/useSuggestedQuestions';
 import { useSessions } from '../hooks/useSessions';
 
 interface AppContextValue {
@@ -14,6 +15,8 @@ interface AppContextValue {
   setDebug: (patch: Partial<DebugSettings>) => void;
   sending: boolean;
   sendMessage: (query: string) => Promise<void>;
+  suggestions: string[];
+  suggestionsLoading: boolean;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -39,12 +42,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setDebugState((prev) => ({ ...prev, ...patch }));
   };
 
+  const suggestionRefreshRef = useRef<(sessionId: string) => void>(() => {});
+
   const { sending, sendMessage } = useChat(
     activeSession,
     updateSession,
     refreshSessions,
     debug,
+    (sessionId) => suggestionRefreshRef.current(sessionId),
   );
+
+  const { suggestions, loading: suggestionsLoading, refreshSuggestions } =
+    useSuggestedQuestions(activeSession, sending);
+
+  suggestionRefreshRef.current = (sessionId) => {
+    void refreshSuggestions(sessionId, true);
+  };
 
   const value = useMemo<AppContextValue>(
     () => ({
@@ -58,6 +71,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setDebug,
       sending,
       sendMessage,
+      suggestions,
+      suggestionsLoading,
     }),
     [
       sessions,
@@ -69,6 +84,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       debug,
       sending,
       sendMessage,
+      suggestions,
+      suggestionsLoading,
     ],
   );
 

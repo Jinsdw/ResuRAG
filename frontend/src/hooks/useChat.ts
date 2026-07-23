@@ -7,6 +7,7 @@ export function useChat(
   updateSession: (id: string, updater: (session: Session) => Session) => void,
   refreshSessions: (sessionId?: string) => Promise<void>,
   debug: DebugSettings,
+  onAnswerComplete?: (sessionId: string) => void,
 ) {
   const [sending, setSending] = useState(false);
 
@@ -96,6 +97,7 @@ export function useChat(
           ),
         }));
         await refreshSessions(sessionId);
+        onAnswerComplete?.(sessionId);
       } catch (error) {
         const message = error instanceof Error ? error.message : '发送失败';
         updateSession(sessionId, (session) => ({
@@ -117,7 +119,7 @@ export function useChat(
         setSending(false);
       }
     },
-    [activeSession, sending, updateSession, refreshSessions, debug.topK, debug.similarityThreshold],
+    [activeSession, sending, updateSession, refreshSessions, onAnswerComplete, debug.topK, debug.similarityThreshold],
   );
 
   return { sending, sendMessage };

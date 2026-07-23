@@ -28,6 +28,18 @@ class Config:
     
     # ========== 候选人身份（生成回答时的人设） ==========
     CANDIDATE_NAME = os.getenv("CANDIDATE_NAME", "耿闯")
+
+    # ========== 猜你想问参考文档 ==========
+    RESURAG_ROOT = PROJECT_ROOT.parent
+    QA_DOCUMENT_PATH = os.getenv(
+        "QA_DOCUMENT_PATH",
+        str(RESURAG_ROOT / "docs" / "项目全景文档.md"),
+    )
+    RESUME_DOCUMENT_PATH = os.getenv(
+        "RESUME_DOCUMENT_PATH",
+        str(RESURAG_ROOT / "docs" / "耿闯-AI应用开发工程师.md"),
+    )
+    SUGGESTION_DOC_MAX_CHARS = int(os.getenv("SUGGESTION_DOC_MAX_CHARS", "6000"))
     
     # ========== 幻觉检测 ==========
     ENABLE_FAITHFULNESS_CHECK = os.getenv("ENABLE_FAITHFULNESS_CHECK", "true").lower() == "true"
