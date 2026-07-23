@@ -26,6 +26,9 @@ class Config:
         )
     )
     
+    # ========== 候选人身份（生成回答时的人设） ==========
+    CANDIDATE_NAME = os.getenv("CANDIDATE_NAME", "耿闯")
+    
     # ========== 幻觉检测 ==========
     ENABLE_FAITHFULNESS_CHECK = os.getenv("ENABLE_FAITHFULNESS_CHECK", "true").lower() == "true"
     FAITHFULNESS_MODEL = os.getenv("FAITHFULNESS_MODEL", "microsoft/deberta-v3-base-mnli")
