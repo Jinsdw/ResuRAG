@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 import threading
 from collections import Counter
 from pathlib import Path
@@ -12,6 +13,36 @@ logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _embedder = None
+
+# 中文字符正则
+_CN_RE = re.compile(r"[\u4e00-\u9fff]+")
+# 英文/数字词正则
+_EN_RE = re.compile(r"[a-zA-Z0-9]+")
+
+
+def _tokenize(text: str) -> List[str]:
+    """混合分词：中文 bigram + 英文整词，无需外部依赖。
+
+    "项目经历" → ["项目", "目经", "经历", "项", "目", "经", "历"]
+    "RAG system" → ["rag", "system"]
+    """
+    tokens = []
+
+    # 1. 中文序列：提取 bigram + 单字
+    for cn_match in _CN_RE.finditer(text):
+        cn_seq = cn_match.group()
+        # bigram（权重更高，语义更强）
+        for i in range(len(cn_seq) - 1):
+            tokens.append(cn_seq[i : i + 2])
+        # 单字（作为补充）
+        for ch in cn_seq:
+            tokens.append(ch)
+
+    # 2. 英文/数字：整词
+    for en_match in _EN_RE.finditer(text):
+        tokens.append(en_match.group().lower())
+
+    return tokens
 
 
 def _token_to_id(token: str) -> int:
@@ -60,17 +91,21 @@ class BGEEmbedder:
         return embeddings
 
     def encode_sparse(self, texts: List[str]) -> List[Dict[int, float]]:
+        """对文档内容生成稀疏向量（中文 bigram + 英文整词）。"""
         sparse_vectors = []
         for text in texts:
-            tokens = list(text)
+            tokens = _tokenize(text)
             token_counts = Counter(tokens)
             total_tokens = len(tokens)
 
             sparse_vec = {}
             for token, count in token_counts.items():
-                if len(token.strip()) == 0:
+                if not token.strip():
                     continue
                 weight = count / total_tokens
+                # bigram 权重加倍（比单字更有区分度）
+                if len(token) >= 2:
+                    weight *= 2.0
                 sparse_vec[_token_to_id(token)] = weight
 
             sparse_vectors.append(sparse_vec)

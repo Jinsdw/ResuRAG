@@ -26,10 +26,24 @@ class MilvusClient:
         logger.info(f"Connected to Milvus at {self.host}:{self.port}")
     
     def _ensure_collection(self):
-        """确保Collection存在，不存在则创建"""
+        """确保Collection存在；schema 不匹配时自动重建。"""
+        target_fields = {
+            "id", "chunk_id", "file_uuid", "content",
+            "source_file_name", "source_page", "metadata",
+            "dense_vector", "sparse_vector",
+        }
         if utility.has_collection(self.collection_name):
             self.collection = Collection(self.collection_name)
-            logger.info(f"Collection '{self.collection_name}' already exists")
+            existing_fields = {f.name for f in self.collection.schema.fields}
+            if existing_fields != target_fields:
+                logger.warning(
+                    "Collection '%s' schema 不匹配，自动删除并重建（数据将丢失）",
+                    self.collection_name,
+                )
+                utility.drop_collection(self.collection_name)
+                self._create_collection()
+            else:
+                logger.info("Collection '%s' already exists", self.collection_name)
         else:
             self._create_collection()
     
@@ -102,7 +116,7 @@ class MilvusClient:
     
     def search_dense(self, query_vector: List[float], top_k: int = 10, filter_expr: str = None):
         """稠密向量检索"""
-        search_params = {"metric_type": "IP", "params": {"nprobe": 10}}
+        search_params = {"metric_type": "IP", "params": {"nprobe": 128}}
         return self._search(query_vector, "dense_vector", search_params, top_k, filter_expr)
     
     def search_sparse(self, query_vector: Dict[int, float], top_k: int = 10, filter_expr: str = None):

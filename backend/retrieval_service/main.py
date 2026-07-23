@@ -6,12 +6,14 @@ from contextlib import asynccontextmanager
 from config import Config
 from core.embedder import get_embedder
 from core.retriever import get_retriever
+from core.reranker import get_reranker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"正在预加载 Embedding 模型: {Config.EMBEDDING_MODEL_DIR}")
     get_embedder()
+    get_reranker()
     get_retriever()
     print("检索服务就绪")
     yield
@@ -27,6 +29,7 @@ class SearchRequest(BaseModel):
     dense_weight: Optional[float] = Config.DENSE_WEIGHT
     similarity_threshold: Optional[float] = 0.0
     filter_file_uuid: Optional[str] = None  # 可选：限定某个 file_uuid，不填则搜索全部
+    rerank: Optional[bool] = True  # 是否启用重排序
 
 class SearchResult(BaseModel):
     chunk_id: str
@@ -56,13 +59,12 @@ def build_file_uuid_filter(filter_file_uuid: Optional[str]) -> Optional[str]:
 
 @app.post("/api/v1/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
-    """执行混合检索：固定检索 10 条候选 -> 排序 -> 按 top_k 采纳"""
+    """执行混合检索：召回 20 条候选 -> 重排序 -> 按 top_k 采纳"""
     try:
         retriever = get_retriever()
         filter_expr = build_file_uuid_filter(request.filter_file_uuid)
         
-        # top_k 上限校验
-        top_k = min(request.top_k or Config.DEFAULT_TOP_K, Config.MAX_TOP_K)
+        top_k = request.top_k or Config.DEFAULT_TOP_K
         
         # 执行检索
         results = retriever.hybrid_search(
@@ -71,6 +73,7 @@ async def search(request: SearchRequest):
             dense_weight=request.dense_weight,
             filter_expr=filter_expr,
             similarity_threshold=request.similarity_threshold or 0.0,
+            rerank=request.rerank if request.rerank is not None else True,
         )
         
         return SearchResponse(
@@ -84,14 +87,14 @@ async def search(request: SearchRequest):
 
 @app.post("/api/v1/search/dense")
 async def search_dense(request: SearchRequest):
-    """仅使用稠密向量检索（语义匹配）：固定检索 10 条候选 -> 排序 -> 按 top_k 采纳"""
+    """仅使用稠密向量检索（语义匹配）：召回 20 条候选 -> 排序 -> 按 top_k 采纳"""
     retriever = get_retriever()
     dense_vector = retriever.embedder.encode_query_vector(request.query)
     
     filter_expr = build_file_uuid_filter(request.filter_file_uuid)
-    top_k = min(request.top_k or Config.DEFAULT_TOP_K, Config.MAX_TOP_K)
+    top_k = request.top_k or Config.DEFAULT_TOP_K
     
-    # 固定检索 candidate_count 条候选
+    # 召回 candidate_count 条候选
     results = retriever.milvus.search_dense(
         dense_vector, 
         top_k=Config.CANDIDATE_COUNT, 
