@@ -19,6 +19,7 @@ from prompts.suggestions import (
     get_default_suggestion_list,
     parse_suggestions,
 )
+from prompts.self_check import build_self_check_prompt, parse_self_check_result
 from core.qa_pool import (
     filter_unasked,
     is_similar_question,
@@ -124,19 +125,37 @@ SSE_HEADERS = {
 }
 
 
+def _iter_llm_deltas(messages: list) -> Iterator[tuple[str | None, str | None]]:
+    """逐 chunk 提取 content / reasoning 增量。"""
+    llm = get_llm_client()
+    for chunk in llm.generate_stream(messages=messages):
+        yield _extract_stream_delta(chunk)
+
+
+def _build_retrieval_summary(chunks: list, max_chunks: int = 5) -> str:
+    """为自检提供检索片段摘要。"""
+    parts: List[str] = []
+    for idx, chunk in enumerate(chunks[:max_chunks], start=1):
+        text = (chunk.get("content") or "").strip()
+        if len(text) > 400:
+            text = text[:400] + "..."
+        parts.append(f"[{idx}] {text}")
+    return "\n".join(parts) if parts else "（无检索片段）"
+
+
 def _stream_llm_response(
     messages: list,
     assistant_message_id: str,
+    *,
+    persist: bool = True,
 ) -> Iterator[str]:
-    """将 LLM 流式 chunk 转为 SSE 格式，并在结束时持久化助手消息"""
+    """将 LLM 流式 chunk 转为 SSE 格式，并在结束时持久化助手消息。"""
     store = get_session_store()
-    llm = get_llm_client()
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
 
     try:
-        for chunk in llm.generate_stream(messages=messages):
-            content, reasoning = _extract_stream_delta(chunk)
+        for content, reasoning in _iter_llm_deltas(messages):
             if content:
                 content_parts.append(content)
                 yield _sse_event({"type": "content", "content": content})
@@ -147,17 +166,126 @@ def _stream_llm_response(
     except Exception as e:
         logger.error(f"流式生成失败: {e}")
         yield _sse_event({"type": "error", "message": str(e)})
-    finally:
-        final_content = "".join(content_parts)
-        final_reasoning = "".join(reasoning_parts) or None
+        return
+
+    if not persist:
+        return
+
+    final_content = "".join(content_parts)
+    final_reasoning = "".join(reasoning_parts) or None
+    if final_content or final_reasoning:
+        store.update_message(
+            assistant_message_id,
+            content=final_content,
+            reasoning=final_reasoning,
+        )
+    elif not content_parts and not reasoning_parts:
+        store.update_message(assistant_message_id, content="")
+
+
+def _stream_rag_with_self_check(
+    query: str,
+    chunks: list,
+    session_id: str,
+    assistant_message_id: str,
+) -> Iterator[str]:
+    """RAG 两阶段生成：首轮仅检索片段 → 自检 → FAIL 时带完整 docs 重生成。"""
+    store = get_session_store()
+    llm = get_llm_client()
+
+    messages_pass1 = build_messages(
+        query=query,
+        chunks=chunks,
+        session_id=session_id,
+        include_reference_docs=False,
+    )
+    content_parts: List[str] = []
+    reasoning_parts: List[str] = []
+
+    try:
+        for content, reasoning in _iter_llm_deltas(messages_pass1):
+            if content:
+                content_parts.append(content)
+                yield _sse_event({"type": "content", "content": content})
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                yield _sse_event({"type": "reasoning", "content": reasoning})
+    except Exception as exc:
+        logger.error("首轮流式生成失败: %s", exc)
+        yield _sse_event({"type": "error", "message": str(exc)})
+        return
+
+    final_content = "".join(content_parts)
+    final_reasoning = "".join(reasoning_parts) or None
+
+    yield _sse_status("reviewing", "正在审核回答质量…")
+
+    passed = True
+    try:
+        check_messages = build_self_check_prompt(
+            query=query,
+            answer=final_content,
+            retrieval_summary=_build_retrieval_summary(chunks),
+        )
+        check_raw = llm.generate_sync(check_messages, enable_thinking=False)
+        passed = parse_self_check_result(check_raw)
+        logger.info(
+            "回答自检: query=%s result=%s raw=%s",
+            query[:50],
+            "PASS" if passed else "FAIL",
+            (check_raw or "")[:30],
+        )
+    except Exception as exc:
+        logger.warning("自检调用失败，保留首轮回答: %s", exc)
+
+    if passed:
         if final_content or final_reasoning:
             store.update_message(
                 assistant_message_id,
                 content=final_content,
                 reasoning=final_reasoning,
             )
-        elif not content_parts and not reasoning_parts:
+        else:
             store.update_message(assistant_message_id, content="")
+        yield _sse_event({"type": "done"})
+        return
+
+    yield _sse_status("regenerating", "回答需补充资料，正在重新组织…")
+    yield _sse_event({"type": "content_reset"})
+
+    messages_pass2 = build_messages(
+        query=query,
+        chunks=chunks,
+        session_id=session_id,
+        include_reference_docs=True,
+    )
+    content_parts2: List[str] = []
+    reasoning_parts2: List[str] = []
+
+    try:
+        for content, reasoning in _iter_llm_deltas(messages_pass2):
+            if content:
+                content_parts2.append(content)
+                yield _sse_event({"type": "content", "content": content})
+            if reasoning:
+                reasoning_parts2.append(reasoning)
+                yield _sse_event({"type": "reasoning", "content": reasoning})
+        yield _sse_event({"type": "done"})
+    except Exception as exc:
+        logger.error("重生成流式失败: %s", exc)
+        yield _sse_event({"type": "error", "message": str(exc)})
+        return
+
+    final_content2 = "".join(content_parts2)
+    final_reasoning2 = "".join(reasoning_parts2) or None
+    if final_content2 or final_reasoning2:
+        store.update_message(
+            assistant_message_id,
+            content=final_content2,
+            reasoning=final_reasoning2,
+        )
+    else:
+        store.update_message(assistant_message_id, content="")
 
 
 # ============ 会话接口 ============
@@ -491,11 +619,13 @@ async def _generate_pipeline_stream(
             yield _sse_event({"type": "citations", "citations": []})
 
     use_rag_prompt = need_retrieval or client_provided_chunks
+    use_self_check = use_rag_prompt and Config.ENABLE_ANSWER_SELF_CHECK
     if use_rag_prompt:
         llm_messages = build_messages(
             query=request.query,
             chunks=chunks,
             session_id=session_id,
+            include_reference_docs=not use_self_check,
         )
         yield _sse_status(
             "generating",
@@ -526,8 +656,17 @@ async def _generate_pipeline_stream(
         yield _sse_event({"type": "error", "message": str(exc)})
         return
 
-    for event in _stream_llm_response(llm_messages, assistant_message_id):
-        yield event
+    if use_self_check:
+        for event in _stream_rag_with_self_check(
+            query=request.query,
+            chunks=chunks,
+            session_id=session_id,
+            assistant_message_id=assistant_message_id,
+        ):
+            yield event
+    else:
+        for event in _stream_llm_response(llm_messages, assistant_message_id):
+            yield event
 
 
 @app.post("/api/v1/generate")

@@ -1,4 +1,5 @@
 from typing import List, Optional
+from pathlib import Path
 
 from config import Config
 from core.session_store import get_session_store
@@ -32,15 +33,18 @@ def to_citations(chunks: list) -> list:
         content = chunk.get("content", "") or ""
         if len(content) > 300:
             content = content[:300] + "..."
-        result.append({
-            "index": idx,
-            "chunk_id": chunk.get("chunk_id", f"chunk_{idx}"),
-            "source_file_name": chunk.get("source_file_name", ""),
-            "source_page": chunk.get("source_page", 0),
-            "score": chunk.get("score", 0.0),
-            "content": content,
-        })
+        result.append(
+            {
+                "index": idx,
+                "chunk_id": chunk.get("chunk_id", f"chunk_{idx}"),
+                "source_file_name": chunk.get("source_file_name", ""),
+                "source_page": chunk.get("source_page", 0),
+                "score": chunk.get("score", 0.0),
+                "content": content,
+            }
+        )
     return result
+
 
 SYSTEM_PROMPT = """{identity}## 场景
 面试官向你（{candidate_name}）提问。请根据下方检索到的文档片段，以第一人称回答与 **我** 的背景、技能、经历相关的问题。
@@ -75,7 +79,7 @@ SYSTEM_PROMPT = """{identity}## 场景
 - ❌ 只有一级 `1. 2.` 而没有 `-` 子要点
 - ❌ 无任何换行的超长段落
 
-## 文档片段
+{reference_docs_section}## 检索文档片段
 {context}
 
 ## 引用列表
@@ -123,6 +127,7 @@ def build_direct_chat_messages(
         {"role": "user", "content": [{"type": "text", "text": user_content}]},
     ]
 
+
 LONG_TERM_MEMORY_PREFIX = """## 长期记忆（本会话历史对话）
 以下为同一会话中较早轮次的对话，供理解上下文与指代关系：
 
@@ -131,6 +136,7 @@ LONG_TERM_MEMORY_PREFIX = """## 长期记忆（本会话历史对话）
 ---
 
 """
+
 
 def _load_session_memory(
     session_id: Optional[str],
@@ -162,12 +168,52 @@ def _load_session_memory(
     return LONG_TERM_MEMORY_PREFIX.format(memory="\n".join(lines))
 
 
+def _read_markdown_doc(path_str: str, max_chars: int) -> str:
+    """读取 Markdown 文档，超出上限时截断并注明。"""
+    path = Path(path_str)
+    if not path.is_file():
+        return f"（文件不存在：{path.name}）"
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return f"（读取失败：{path.name}）"
+    if len(text) <= max_chars:
+        return text
+    return (
+        text[:max_chars].rstrip()
+        + f"\n\n...（{path.name} 内容已截断，原文共 {len(text)} 字符）"
+    )
+
+
+REFERENCE_DOCS_SECTION = """## 完整参考文档（简历与项目全景）
+以下为 {candidate_name} 的完整资料，可与检索片段对照使用：
+
+{reference_docs}
+
+"""
+
+
+def _build_reference_docs_content() -> str:
+    """读取 docs 下简历与全景文档，合并为 system 参考正文。"""
+    max_total = Config.GENERATION_REFERENCE_DOC_MAX_CHARS
+    per_file = max(max_total // 2, 1000)
+    resume_path = Path(Config.RESUME_DOCUMENT_PATH)
+    info_path = Path(Config.INFORMATION_DOCUMENT_PATH)
+    resume_body = _read_markdown_doc(str(resume_path), per_file)
+    info_body = _read_markdown_doc(str(info_path), per_file)
+    return (
+        f"### {resume_path.name}（简历）\n\n{resume_body}\n\n"
+        f"### {info_path.name}（项目全景）\n\n{info_body}"
+    )
+
+
 def build_messages(
     query: str,
     chunks: list,
     session_id: Optional[str] = None,
     max_chunks: int = 5,
     max_memory_messages: int = 30,
+    include_reference_docs: bool = False,
 ) -> list:
     """
     构建 LLM 消息；若提供 session_id，则从数据库加载历史 role/content 作为长期记忆前缀。
@@ -188,14 +234,24 @@ def build_messages(
         context_parts.append(f"[{idx}] {content}")
         citation_list.append(f"[{idx}] {chunk_id}")
 
-    context = "\n\n".join(context_parts) if context_parts else "（未检索到相关文档片段）"
+    context = (
+        "\n\n".join(context_parts) if context_parts else "（未检索到相关文档片段）"
+    )
     citation_list_str = "\n".join(citation_list)
 
     memory_prefix = _load_session_memory(session_id, max_messages=max_memory_messages)
     identity = build_identity_prompt()
+    if include_reference_docs:
+        reference_docs_section = REFERENCE_DOCS_SECTION.format(
+            candidate_name=CANDIDATE_NAME,
+            reference_docs=_build_reference_docs_content(),
+        )
+    else:
+        reference_docs_section = ""
     system_content = memory_prefix + SYSTEM_PROMPT.format(
         identity=identity,
         candidate_name=CANDIDATE_NAME,
+        reference_docs_section=reference_docs_section,
         context=context,
         citation_list=citation_list_str,
     )
@@ -203,6 +259,9 @@ def build_messages(
     user_content = USER_TEMPLATE.format(query=query, candidate_name=CANDIDATE_NAME)
 
     return [
-        {"role": "system", "content": [{"type": "text", "text": system_content}]},
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": system_content}],
+        },
         {"role": "user", "content": [{"type": "text", "text": user_content}]},
     ]

@@ -7,17 +7,42 @@ logger = logging.getLogger(__name__)
 
 
 def _flatten_messages(messages: List[Dict]) -> List[Dict[str, str]]:
-    """将 multimodal content 格式转为纯文本，兼容非流式调用。"""
+    """将 multimodal content 格式转为纯文本，兼容非流式调用（忽略 file_url）。"""
     flat = []
     for msg in messages:
         content = msg.get("content", "")
         if isinstance(content, list):
-            # [{"type": "text", "text": "..."}] → 纯字符串
             content = "".join(
                 part.get("text", "") for part in content if part.get("type") == "text"
             )
         flat.append({"role": msg["role"], "content": content})
     return flat
+
+
+def _prepare_stream_messages(messages: List[Dict]) -> List[Dict]:
+    """流式调用保留 file_url；纯文本 multimodal 仍压平为字符串。"""
+    prepared: List[Dict] = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, list) and any(
+            part.get("type") == "file_url" for part in content
+        ):
+            prepared.append(msg)
+            continue
+        if isinstance(content, list):
+            prepared.append(
+                {
+                    "role": msg["role"],
+                    "content": "".join(
+                        part.get("text", "")
+                        for part in content
+                        if part.get("type") == "text"
+                    ),
+                }
+            )
+        else:
+            prepared.append(msg)
+    return prepared
 
 
 class LLMClient:
@@ -55,11 +80,11 @@ class LLMClient:
 
     def _generate_zhipu_stream(self, messages: List[Dict[str, str]]) -> Iterator:
         """智谱 API 流式调用"""
-        flat = _flatten_messages(messages)
+        prepared = _prepare_stream_messages(messages)
         try:
             return self.client.chat.completions.create(
                 model=self.model,
-                messages=flat,
+                messages=prepared,
                 thinking={"type": "enabled"},
                 stream=True,
             )

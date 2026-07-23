@@ -12,6 +12,7 @@ interface CitationListProps {
 }
 
 export function CitationList({ citations, loading = false, statusMessage }: CitationListProps) {
+  return ''
   if (loading) {
     return (
       <div className="citation-list">

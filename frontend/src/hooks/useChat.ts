@@ -78,6 +78,10 @@ export function useChat(
           } else if (event.type === 'reasoning') {
             reasoning += event.content;
             patchAssistant({ reasoning, content });
+          } else if (event.type === 'content_reset') {
+            content = '';
+            reasoning = '';
+            patchAssistant({ content: '', reasoning: '' });
           } else if (event.type === 'error') {
             throw new Error(event.message);
           }

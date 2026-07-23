@@ -13,7 +13,9 @@ export type PipelineStep =
   | 'retrieving'
   | 'direct'
   | 'preparing'
-  | 'generating';
+  | 'generating'
+  | 'reviewing'
+  | 'regenerating';
 
 export interface ChatMessage {
   id: string;
@@ -64,5 +66,6 @@ export type StreamEvent =
   | { type: 'citations'; citations: Citation[] }
   | { type: 'content'; content: string }
   | { type: 'reasoning'; content: string }
+  | { type: 'content_reset' }
   | { type: 'done' }
   | { type: 'error'; message: string };

@@ -29,8 +29,8 @@ _cache_doc_context: str | None = None
 _cache_doc_mtime_key: tuple[float, float] | None = None
 
 
-def _resolve_qa_path() -> Path:
-    return Path(Config.QA_DOCUMENT_PATH)
+def _resolve_information_path() -> Path:
+    return Path(Config.INFORMATION_DOCUMENT_PATH)
 
 
 def _resolve_resume_path() -> Path:
@@ -113,7 +113,7 @@ def load_qa_questions(*, force_reload: bool = False) -> List[str]:
     """加载全景文档 QA 章节中的问题池。"""
     global _cache_questions, _cache_mtime
 
-    path = _resolve_qa_path()
+    path = _resolve_information_path()
     if not path.is_file():
         logger.warning("QA 文档不存在，使用内置推荐问题: %s", path)
         return list(FALLBACK_SUGGESTIONS)
@@ -139,7 +139,7 @@ def get_document_context_for_suggestions(*, force_reload: bool = False) -> str:
     global _cache_doc_context, _cache_doc_mtime_key
 
     resume_path = _resolve_resume_path()
-    qa_path = _resolve_qa_path()
+    qa_path = _resolve_information_path()
     resume_mtime = resume_path.stat().st_mtime if resume_path.is_file() else 0.0
     qa_mtime = qa_path.stat().st_mtime if qa_path.is_file() else 0.0
     key = (resume_mtime, qa_mtime)
