@@ -13,6 +13,10 @@ class Config:
     ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "")
     ZHIPU_MODEL = os.getenv("ZHIPU_MODEL", "GLM-4.6V-FlashX")
     
+    # ========== 检索服务 ==========
+    RETRIEVAL_SERVICE_URL = os.getenv("RETRIEVAL_SERVICE_URL", "http://localhost:8003")
+    RETRIEVAL_TIMEOUT = float(os.getenv("RETRIEVAL_TIMEOUT", 30.0))
+    
     # ========== 服务配置 ==========
     PORT = int(os.getenv("GENERATION_PORT", 8004))
     SESSION_DB_PATH = Path(

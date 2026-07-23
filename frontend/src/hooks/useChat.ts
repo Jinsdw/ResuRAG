@@ -1,24 +1,12 @@
 import { useCallback, useState } from 'react';
-import type { ChatMessage, Citation, DebugSettings, SearchResult, Session } from '../types';
+import type { ChatMessage, DebugSettings, Session } from '../types';
 import { streamGenerate } from '../services/generationService';
-import { searchDocuments } from '../services/retrievalService';
-
-function toCitations(results: SearchResult[]): Citation[] {
-  return results.map((item, index) => ({
-    index: index + 1,
-    chunk_id: item.chunk_id,
-    source_file_name: item.source_file_name,
-    source_page: item.source_page,
-    score: item.score,
-    content: item.content,
-  }));
-}
 
 export function useChat(
   activeSession: Session | null,
   updateSession: (id: string, updater: (session: Session) => Session) => void,
-  debug: DebugSettings,
   refreshSessions: (sessionId?: string) => Promise<void>,
+  debug: DebugSettings,
 ) {
   const [sending, setSending] = useState(false);
 
@@ -56,44 +44,39 @@ export function useChat(
 
       setSending(true);
       try {
-        const results = await searchDocuments({
-          query: query.trim(),
-          topK: debug.topK,
-          similarityThreshold: debug.similarityThreshold,
-        });
-
-        const citations = toCitations(results);
-
-        updateSession(sessionId, (session) => ({
-          ...session,
-          messages: session.messages.map((msg) =>
-            msg.id === assistantId ? { ...msg, citations } : msg,
-          ),
-        }));
-
         let content = '';
         let reasoning = '';
-        for await (const event of streamGenerate(query.trim(), results, sessionId, {
+        const patchAssistant = (
+          patch: Partial<Pick<ChatMessage, 'content' | 'reasoning' | 'citations' | 'pipelineStep' | 'statusMessage'>>,
+        ) => {
+          updateSession(sessionId, (session) => ({
+            ...session,
+            messages: session.messages.map((msg) =>
+              msg.id === assistantId ? { ...msg, ...patch } : msg,
+            ),
+          }));
+        };
+
+        for await (const event of streamGenerate(query.trim(), sessionId, {
           userMessageId: userMessage.id,
           assistantMessageId: assistantId,
-          citations,
+          citations: [],
+          topK: debug.topK,
+          similarityThreshold: debug.similarityThreshold,
         })) {
-          if (event.type === 'content') {
+          if (event.type === 'status') {
+            patchAssistant({
+              pipelineStep: event.step,
+              statusMessage: event.message,
+            });
+          } else if (event.type === 'citations') {
+            patchAssistant({ citations: event.citations });
+          } else if (event.type === 'content') {
             content += event.content;
-            updateSession(sessionId, (session) => ({
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === assistantId ? { ...msg, content, reasoning } : msg,
-              ),
-            }));
+            patchAssistant({ content, reasoning, statusMessage: undefined });
           } else if (event.type === 'reasoning') {
             reasoning += event.content;
-            updateSession(sessionId, (session) => ({
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === assistantId ? { ...msg, content, reasoning } : msg,
-              ),
-            }));
+            patchAssistant({ reasoning, content });
           } else if (event.type === 'error') {
             throw new Error(event.message);
           }
@@ -102,7 +85,14 @@ export function useChat(
         updateSession(sessionId, (session) => ({
           ...session,
           messages: session.messages.map((msg) =>
-            msg.id === assistantId ? { ...msg, isStreaming: false } : msg,
+            msg.id === assistantId
+              ? {
+                  ...msg,
+                  isStreaming: false,
+                  pipelineStep: undefined,
+                  statusMessage: undefined,
+                }
+              : msg,
           ),
         }));
         await refreshSessions(sessionId);
@@ -116,6 +106,8 @@ export function useChat(
                   ...msg,
                   content: `抱歉，生成回答时出错：${message}`,
                   isStreaming: false,
+                  pipelineStep: undefined,
+                  statusMessage: undefined,
                   citations: msg.citations ?? [],
                 }
               : msg,
@@ -125,7 +117,7 @@ export function useChat(
         setSending(false);
       }
     },
-    [activeSession, debug, sending, updateSession, refreshSessions],
+    [activeSession, sending, updateSession, refreshSessions, debug.topK, debug.similarityThreshold],
   );
 
   return { sending, sendMessage };

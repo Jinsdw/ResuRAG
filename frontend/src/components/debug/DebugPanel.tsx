@@ -12,6 +12,7 @@ const { Title, Text } = Typography;
 function getLatestCitationState(messages: ChatMessage[]): {
   citations: Citation[];
   loading: boolean;
+  statusMessage?: string;
 } {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const msg = messages[i];
@@ -19,6 +20,7 @@ function getLatestCitationState(messages: ChatMessage[]): {
       return {
         citations: msg.citations ?? [],
         loading: msg.citations === undefined,
+        statusMessage: msg.statusMessage,
       };
     }
   }
@@ -28,7 +30,7 @@ function getLatestCitationState(messages: ChatMessage[]): {
 export function DebugPanel() {
   const { debug, setDebug, activeSession } = useAppContext();
 
-  const { citations, loading: citationsLoading } = useMemo(
+  const { citations, loading: citationsLoading, statusMessage } = useMemo(
     () => getLatestCitationState(activeSession?.messages ?? []),
     [activeSession?.messages],
   );
@@ -63,7 +65,11 @@ export function DebugPanel() {
       </div>
 
       <div className="debug-panel__citations">
-        <CitationList citations={citations} loading={citationsLoading} />
+        <CitationList
+          citations={citations}
+          loading={citationsLoading}
+          statusMessage={statusMessage}
+        />
       </div>
     </div>
   );

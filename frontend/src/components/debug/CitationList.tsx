@@ -8,16 +8,17 @@ const { Text } = Typography;
 interface CitationListProps {
   citations: Citation[];
   loading?: boolean;
+  statusMessage?: string;
 }
 
-export function CitationList({ citations, loading = false }: CitationListProps) {
+export function CitationList({ citations, loading = false, statusMessage }: CitationListProps) {
   if (loading) {
     return (
       <div className="citation-list">
         <Text className="citation-title">引用来源</Text>
         <div className="citation-list__loading">
           <Spin size="small" />
-          <Text type="secondary">检索中…</Text>
+          <Text type="secondary">{statusMessage || '正在检索相关资料…'}</Text>
         </div>
       </div>
     );

@@ -15,13 +15,15 @@ export interface GenerateOptions {
   userMessageId: string;
   assistantMessageId: string;
   citations: Citation[];
+  topK?: number;
+  similarityThreshold?: number;
 }
 
 export async function* streamGenerate(
   query: string,
-  chunks: SearchResult[],
   sessionId: string,
   options: GenerateOptions,
+  chunks?: SearchResult[],
 ): AsyncGenerator<StreamEvent> {
   const response = await fetch(`${GENERATION_BASE}/api/v1/generate`, {
     method: 'POST',
@@ -33,6 +35,8 @@ export async function* streamGenerate(
       query,
       chunks,
       citations: options.citations,
+      top_k: options.topK,
+      similarity_threshold: options.similarityThreshold,
     }),
   });
 

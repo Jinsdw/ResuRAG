@@ -1,8 +1,9 @@
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
+import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -10,7 +11,9 @@ from pydantic import BaseModel, Field
 from config import Config
 from core.llm_client import get_llm_client
 from core.session_store import get_session_store
-from prompts.templates import build_messages
+from prompts.templates import build_messages, build_direct_chat_messages
+from prompts.rewrite import build_rewrite_prompt
+from prompts.judge import build_judge_prompt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,8 +44,10 @@ class GenerationRequest(BaseModel):
     user_message_id: str = Field(..., min_length=1, description="用户消息 ID")
     assistant_message_id: str = Field(..., min_length=1, description="助手消息 ID")
     query: str
-    chunks: list
+    chunks: Optional[list] = None  # 可选：不传则由生成服务内部检索
     citations: Optional[List[Dict[str, Any]]] = None
+    top_k: Optional[int] = Field(default=10, ge=1, le=20)
+    similarity_threshold: Optional[float] = Field(default=0.0, ge=0.0, le=1.0)
     enable_faithfulness: Optional[bool] = Config.ENABLE_FAITHFULNESS_CHECK
 
 
@@ -87,6 +92,17 @@ def _extract_stream_delta(chunk) -> tuple[str | None, str | None]:
 
 def _sse_event(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _sse_status(step: str, message: str) -> str:
+    return _sse_event({"type": "status", "step": step, "message": message})
+
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
 
 
 def _stream_llm_response(
@@ -169,12 +185,244 @@ async def delete_session(session_id: str):
 # ============ 生成接口 ============
 
 
+def _load_history_for_rewrite(session_id: str, max_turns: int = 6) -> str:
+    """加载最近 N 轮对话，用于 query 改写与检索意图判断。"""
+    store = get_session_store()
+    rows = store.list_messages(session_id)
+    lines: List[str] = []
+    for row in rows:
+        role = row.get("role", "")
+        content = (row.get("content") or "").strip()
+        if not content:
+            continue
+        label = "面试官" if role == "user" else "助手"
+        lines.append(f"{label}：{content}")
+    if not lines:
+        return "（无历史对话）"
+    if len(lines) > max_turns * 2:
+        lines = lines[-(max_turns * 2):]
+    return "\n".join(lines)
+
+
+def _normalize_rewrite_text(text: str, fallback: str) -> str:
+    """清理改写模型输出，失败时回退原始问题。"""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return fallback
+    for prefix in (
+        "改写后的查询：",
+        "改写后：",
+        "检索查询：",
+        "独立查询：",
+    ):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+    cleaned = cleaned.strip("\"'")
+    return cleaned if len(cleaned) >= 2 else fallback
+
+
+def _parse_retrieval_decision(text: str) -> bool:
+    """解析 YES/NO；无法解析时默认需要检索（简历问答场景更安全）。"""
+    normalized = (text or "").strip().upper()
+    if not normalized:
+        return True
+    tokens = normalized.replace("\n", " ").split()
+    for token in reversed(tokens):
+        word = token.strip(".,:;!?\"'()[]，。；：！？")
+        if word == "NO":
+            return False
+        if word == "YES":
+            return True
+    if normalized.startswith("NO") or normalized.endswith(" NO"):
+        return False
+    if "YES" in normalized and "NO" not in normalized:
+        return True
+    return True
+
+
+async def _rewrite_query(query: str, session_id: str) -> str:
+    """利用历史对话改写 query，失败时返回原始 query。"""
+    history = _load_history_for_rewrite(session_id)
+    llm = get_llm_client()
+    messages = build_rewrite_prompt(query, history)
+    try:
+        rewritten = llm.generate_sync(messages, enable_thinking=False)
+        result = _normalize_rewrite_text(rewritten, query.strip())
+        logger.info("Query 改写: %s → %s", query[:50], result[:80])
+        return result
+    except Exception as exc:
+        logger.warning("Query 改写失败，使用原始 query: %s", exc)
+        return query.strip()
+
+
+async def _should_retrieve(query: str, session_id: str) -> bool:
+    """判断是否需要检索知识库。失败时默认检索。"""
+    history = _load_history_for_rewrite(session_id)
+    llm = get_llm_client()
+    messages = build_judge_prompt(query, history)
+    try:
+        result = llm.generate_sync(messages, enable_thinking=False)
+        need = _parse_retrieval_decision(result)
+        logger.info("检索意图判断: query=%s → %s (raw=%s)", query[:50], need, result[:30])
+        return need
+    except Exception as exc:
+        logger.warning("意图判断失败，默认检索: %s", exc)
+        return True
+
+
+async def _retrieve_chunks(
+    query: str,
+    top_k: int = 10,
+    similarity_threshold: float = 0.0,
+) -> tuple[list, Optional[str]]:
+    """调用检索服务获取 chunks。返回 (results, error_message)。"""
+    url = f"{Config.RETRIEVAL_SERVICE_URL.rstrip('/')}/api/v1/search"
+    async with httpx.AsyncClient(timeout=Config.RETRIEVAL_TIMEOUT) as client:
+        try:
+            response = await client.post(
+                url,
+                json={
+                    "query": query,
+                    "top_k": top_k,
+                    "similarity_threshold": similarity_threshold,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            results = data.get("results", [])
+            logger.info("检索完成: query=%s, 命中 %d 条", query[:50], len(results))
+            return results, None
+        except Exception as exc:
+            logger.error("检索服务调用失败: %s", exc)
+            return [], str(exc)
+
+
+async def _generate_pipeline_stream(
+    request: GenerationRequest,
+    session_id: str,
+    user_message_id: str,
+    assistant_message_id: str,
+) -> AsyncIterator[str]:
+    """SSE 全流程：推送阶段状态 → 检索/改写 → 流式生成。"""
+    from prompts.templates import to_citations
+
+    store = get_session_store()
+    client_provided_chunks = request.chunks is not None and len(request.chunks) > 0
+    need_retrieval = False
+    rewritten_query = request.query.strip()
+    chunks: list = list(request.chunks or [])
+    resolved_citations: List[Dict[str, Any]] = list(request.citations or [])
+    retrieval_error: Optional[str] = None
+
+    if client_provided_chunks:
+        need_retrieval = True
+        if not resolved_citations:
+            resolved_citations = to_citations(chunks)
+        logger.info("使用前端传入的 chunks（%d 条），跳过改写与意图判断", len(chunks))
+        yield _sse_status("preparing", "已载入检索片段，正在准备生成回答…")
+        yield _sse_event({"type": "citations", "citations": resolved_citations})
+    else:
+        yield _sse_status(
+            "rewriting",
+            "正在结合对话历史，优化检索查询表述…",
+        )
+        rewritten_query = await _rewrite_query(request.query, session_id)
+        logger.info("改写后 query: %s", rewritten_query[:80])
+
+        yield _sse_status(
+            "judging",
+            "正在分析问题是否需要检索个人资料…",
+        )
+        need_retrieval = await _should_retrieve(rewritten_query, session_id)
+        logger.info("是否需要检索: %s", need_retrieval)
+
+        if need_retrieval:
+            yield _sse_status(
+                "retrieving",
+                "正在检索个人资料库中的相关片段…",
+            )
+            chunks, retrieval_error = await _retrieve_chunks(
+                rewritten_query,
+                top_k=request.top_k or 10,
+                similarity_threshold=request.similarity_threshold or 0.0,
+            )
+            resolved_citations = to_citations(chunks) if chunks else []
+            yield _sse_event({"type": "citations", "citations": resolved_citations})
+            if retrieval_error:
+                logger.warning(
+                    "检索失败 session=%s error=%s",
+                    session_id,
+                    retrieval_error,
+                )
+                yield _sse_event(
+                    {
+                        "type": "error",
+                        "message": (
+                            f"检索服务不可用，请确认 retrieval_service 已启动"
+                            f"（{Config.RETRIEVAL_SERVICE_URL}）：{retrieval_error}"
+                        ),
+                    }
+                )
+                return
+            if not chunks:
+                logger.warning("检索结果为空，session=%s", session_id)
+        else:
+            resolved_citations = []
+            chunks = []
+            yield _sse_status(
+                "direct",
+                "该问题无需检索资料，正在准备直接作答…",
+            )
+            yield _sse_event({"type": "citations", "citations": []})
+
+    use_rag_prompt = need_retrieval or client_provided_chunks
+    if use_rag_prompt:
+        llm_messages = build_messages(
+            query=request.query,
+            chunks=chunks,
+            session_id=session_id,
+        )
+        yield _sse_status(
+            "generating",
+            "正在基于检索片段组织并生成回答…",
+        )
+    else:
+        llm_messages = build_direct_chat_messages(
+            query=request.query,
+            session_id=session_id,
+        )
+        yield _sse_status("generating", "正在生成回答…")
+
+    try:
+        store.add_message(
+            session_id=session_id,
+            message_id=user_message_id,
+            role="user",
+            content=request.query.strip(),
+        )
+        store.add_message(
+            session_id=session_id,
+            message_id=assistant_message_id,
+            role="assistant",
+            content="",
+            citations=resolved_citations,
+        )
+    except ValueError as exc:
+        yield _sse_event({"type": "error", "message": str(exc)})
+        return
+
+    for event in _stream_llm_response(llm_messages, assistant_message_id):
+        yield event
+
+
 @app.post("/api/v1/generate")
 async def generate(
     request: GenerationRequest,
     x_browser_fingerprint: Optional[str] = Header(None, alias=FINGERPRINT_HEADER),
 ):
-    """流式生成回答（SSE），并持久化聊天记录"""
+    """流式生成回答（SSE），并持久化聊天记录。
+
+    流程：改写 query → 判断意图 → 检索/直接 → 流式生成"""
     fingerprint = _read_fingerprint(x_browser_fingerprint)
     logger.info(
         "收到生成请求: session=%s query=%s...",
@@ -192,36 +440,15 @@ async def generate(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    llm_messages = build_messages(
-        query=request.query,
-        chunks=request.chunks,
-        session_id=session_id,
-    )
-    try:
-        store.add_message(
-            session_id=session_id,
-            message_id=user_message_id,
-            role="user",
-            content=request.query.strip(),
-        )
-        store.add_message(
-            session_id=session_id,
-            message_id=assistant_message_id,
-            role="assistant",
-            content="",
-            citations=request.citations,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     return StreamingResponse(
-        _stream_llm_response(llm_messages, assistant_message_id),
+        _generate_pipeline_stream(
+            request,
+            session_id,
+            user_message_id,
+            assistant_message_id,
+        ),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_HEADERS,
     )
 
 

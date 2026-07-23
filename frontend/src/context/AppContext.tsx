@@ -42,8 +42,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { sending, sendMessage } = useChat(
     activeSession,
     updateSession,
-    debug,
     refreshSessions,
+    debug,
   );
 
   const value = useMemo<AppContextValue>(

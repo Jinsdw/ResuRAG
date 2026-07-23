@@ -31,6 +31,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const hasAnswer = answerText.length > 0;
   const waitingForStream =
     message.isStreaming && !hasReasoning && !hasAnswer;
+  const pipelineStatus = message.statusMessage?.trim();
 
   return (
     <div className="message-row message-row--assistant">
@@ -39,7 +40,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       </div>
       <div className="message-bubble message-bubble--assistant">
         {waitingForStream ? (
-          <Spin size="small" />
+          <div className="message-block message-block--pipeline">
+            <Spin size="small" />
+            <Text type="secondary" className="message-block__pipeline-text">
+              {pipelineStatus || '正在处理您的问题…'}
+            </Text>
+          </div>
         ) : (
           <>
             {hasReasoning && (
@@ -66,7 +72,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 <div className="message-block message-block--answer-pending">
                   <Spin size="small" />
                   <Text type="secondary" className="message-block__pending-text">
-                    正在生成回答…
+                    {pipelineStatus || '正在生成回答…'}
                   </Text>
                 </div>
               )

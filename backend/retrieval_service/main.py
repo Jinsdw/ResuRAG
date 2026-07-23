@@ -134,8 +134,8 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"🔍 检索服务启动中...")
-    print(f"📦 Milvus: {Config.MILVUS_HOST}:{Config.MILVUS_PORT}")
-    print(f"🧠 Embedding模型: {Config.EMBEDDING_MODEL}")
-    print(f"🔗 访问地址: http://0.0.0.0:{Config.PORT}")
+    print("检索服务启动中...")
+    print(f"Milvus: {Config.MILVUS_HOST}:{Config.MILVUS_PORT}")
+    print(f"Embedding模型: {Config.EMBEDDING_MODEL}")
+    print(f"访问地址: http://0.0.0.0:{Config.PORT}")
     uvicorn.run("main:app", host="0.0.0.0", port=Config.PORT, reload=True)
