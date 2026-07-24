@@ -10,5 +10,5 @@ class Config:
     CHUNK_SIZE = 512
     CHUNK_OVERLAP = 128
 
-    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
+    ALLOWED_EXTENSIONS = {".md"}
     MAX_FILE_SIZE = 50 * 1024 * 1024

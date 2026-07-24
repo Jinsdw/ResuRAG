@@ -15,11 +15,6 @@ import aiofiles
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 # 解析器：按文件类型选择对应 Loader
 from langchain_core.documents import Document
-from langchain_community.document_loaders import (
-    TextLoader,
-    UnstructuredPDFLoader,
-    UnstructuredWordDocumentLoader,
-)
 
 app = FastAPI(title="RAG 上传切割服务")
 
@@ -33,7 +28,7 @@ class Config:
     CHUNK_OVERLAP = 128       # 重叠字符数（保证语义连贯）
     
     # 支持的文件类型
-    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md"}
+    ALLOWED_EXTENSIONS = {".md"}
     
     # 最大文件大小（50MB）
     MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -80,15 +75,9 @@ class RAGIngestionPipeline:
     
     def _load_documents(self, file_path: Path, file_ext: str) -> List[Document]:
         """根据文件类型选择解析器"""
-        if file_ext in {".txt", ".md"}:
-            loader = TextLoader(str(file_path), encoding="utf-8")
-            return loader.load()
-        if file_ext == ".pdf":
-            loader = UnstructuredPDFLoader(str(file_path))
-            return loader.load()
-        if file_ext == ".docx":
-            loader = UnstructuredWordDocumentLoader(str(file_path))
-            return loader.load()
+        if file_ext == ".md":
+            text = file_path.read_text(encoding="utf-8")
+            return [Document(page_content=text, metadata={"source": str(file_path)})]
         raise ValueError(f"不支持的文件类型: {file_ext}")
     
     async def upload_and_chunk(
